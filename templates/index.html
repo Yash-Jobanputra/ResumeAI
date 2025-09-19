@@ -6,1332 +6,765 @@
     <title>Resume AI - Smart Resume Customization</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
     <style>
-        .step-active { background-color: #3b82f6; color: white; }
-        .step-completed { background-color: #10b981; color: white; }
-        .step-inactive { background-color: #d1d5db; color: #6b7280; }
-        .fade-in { animation: fadeIn 0.5s ease-in; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .fade-in { animation: fadeIn 0.5s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        [x-cloak] { display: none !important; }
+        .drag-over { border-color: #3b82f6; background-color: #eff6ff; }
+        .nav-active { border-bottom-color: #3b82f6; color: #3b82f6; }
+        .nav-inactive { border-bottom-color: transparent; color: #6b7280; }
+        .toast {
+            animation: slideInRight 0.5s ease-in-out, fadeOut 0.5s ease-in-out 4.5s forwards;
+        }
+        @keyframes slideInRight { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; visibility: hidden; } }
     </style>
 </head>
-<body class="bg-gray-50 min-h-screen" x-data="resumeApp()">
+<body class="bg-gray-100 min-h-screen font-sans" x-data="resumeApp()" x-cloak>
+
+    <!-- Global Components -->
+    <div x-show="isLoading" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50">
+        <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-white"></div>
+    </div>
+    <!-- Toasts / Notifications -->
+    <div class="fixed top-5 right-5 z-50 space-y-3">
+        <template x-for="toast in toasts" :key="toast.id">
+            <div class="toast p-4 rounded-md shadow-lg text-white" :class="{ 'bg-red-500': toast.type === 'error', 'bg-green-500': toast.type === 'success', 'bg-blue-500': toast.type === 'info' }">
+                <span x-text="toast.message"></span>
+            </div>
+        </template>
+    </div>
+    <!-- Delete Modal -->
+    <div x-show="showDeleteModal" class="fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center z-40 fade-in">
+        <div class="bg-white rounded-lg shadow-xl p-8 max-w-md w-full">
+            <h2 class="text-2xl font-semibold mb-4" x-text="deleteContext === 'resume' ? 'Delete Resume' : (deleteContext === 'application' ? 'Delete Application' : 'Delete Scraped JD')"></h2>
+            <p class="text-gray-600 mb-6">Are you sure? This action cannot be undone.</p>
+            <div class="mt-8 flex justify-end space-x-4">
+                <button @click="showDeleteModal = false" class="bg-gray-300 text-gray-800 px-6 py-2 rounded-lg hover:bg-gray-400">Cancel</button>
+                <button @click="deleteItem()" class="bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-red-700">Delete</button>
+            </div>
+        </div>
+    </div>
+    <!-- Resume Selection Modal -->
+    <div x-show="showResumeSelectionModal" class="fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center z-40 fade-in">
+        <div class="bg-white rounded-lg shadow-xl p-8 max-w-lg w-full">
+            <h2 class="text-2xl font-semibold mb-4">Select a Resume to Use</h2>
+            <p class="text-gray-600 mb-6">Which resume would you like to customize for the role at <strong x-text="jdToUse?.company_name"></strong>?</p>
+            <div class="space-y-3 max-h-60 overflow-y-auto">
+                <template x-for="resume in resumes" :key="resume.id">
+                    <button @click="startCustomizationWithSelectedResume(resume)" class="w-full text-left p-3 border rounded-lg hover:bg-gray-100 hover:border-blue-500">
+                        <span class="font-semibold text-gray-800" x-text="resume.resume_name"></span>
+                    </button>
+                </template>
+            </div>
+            <div class="mt-8 flex justify-end">
+                <button @click="showResumeSelectionModal = false" class="bg-gray-300 text-gray-800 px-6 py-2 rounded-lg hover:bg-gray-400">Cancel</button>
+            </div>
+        </div>
+    </div>
+    
     <div class="container mx-auto px-4 py-8">
         <!-- Header -->
-        <div class="text-center mb-8">
-            <h1 class="text-4xl font-bold text-gray-800 mb-2">Resume AI</h1>
-            <p class="text-gray-600">Customize your resume with AI to match any job description</p>
-            
-            <!-- Navigation Menu -->
-            <div class="mt-4 flex justify-center space-x-4">
-                <button @click="goToApplications()" 
-                        class="text-blue-500 hover:text-blue-700 text-sm underline">
-                    📋 View All Applications
-                </button>
-                <button @click="startOver()" 
-                        x-show="step > 1"
-                        class="text-purple-500 hover:text-purple-700 text-sm underline">
-                    🔄 Start New Resume
-                </button>
+        <div class="text-center mb-6">
+            <h1 class="text-5xl font-bold text-gray-800 mb-2">Resume AI</h1>
+            <p class="text-gray-600 text-lg">Your Personal Resume & Application Hub</p>
+            <div x-show="userSessionId" class="mt-2">
+                <p class="text-xs text-gray-500">Your Session ID (for extension): <span @click="copyToClipboard(userSessionId)" class="font-mono bg-gray-200 p-1 rounded cursor-pointer" title="Click to copy" x-text="userSessionId"></span></p>
             </div>
         </div>
 
-        <!-- Progress Steps -->
-        <!-- Progress Steps -->
-        <div class="flex justify-center mb-8">
-            <div class="flex items-center space-x-4">
-                <div class="flex items-center">
-                    <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold"
-                         :class="step >= 1 ? (step > 1 ? 'step-completed' : 'step-active') : 'step-inactive'">1</div>
-                    <span class="ml-2 text-sm font-medium">Info</span>
-                </div>
-                <div class="w-8 h-1 bg-gray-300"></div>
-                <div class="flex items-center">
-                    <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold"
-                         :class="step >= 2 ? (step > 2 ? 'step-completed' : 'step-active') : 'step-inactive'">2</div>
-                    <span class="ml-2 text-sm font-medium">Upload</span>
-                </div>
-                <div class="w-8 h-1 bg-gray-300"></div>
-                <div class="flex items-center">
-                    <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold"
-                         :class="step >= 3 ? (step > 3 ? 'step-completed' : 'step-active') : 'step-inactive'">3</div>
-                    <span class="ml-2 text-sm font-medium">Select</span>
-                </div>
-                <div class="w-8 h-1 bg-gray-300"></div>
-                <div class="flex items-center">
-                    <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold"
-                         :class="step >= 4 ? (step > 4 ? 'step-completed' : 'step-active') : 'step-inactive'">4</div>
-                    <span class="ml-2 text-sm font-medium">AI Setup</span>
-                </div>
-                <div class="w-8 h-1 bg-gray-300"></div>
-                <div class="flex items-center">
-                    <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold"
-                         :class="step >= 5 ? (step > 5 ? 'step-completed' : 'step-active') : 'step-inactive'">5</div>
-                    <span class="ml-2 text-sm font-medium">Job Details</span>
-                </div>
-                <div class="w-8 h-1 bg-gray-300"></div>
-                <div class="flex items-center">
-                    <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold"
-                         :class="step >= 6 ? (step > 6 ? 'step-completed' : 'step-active') : 'step-inactive'">6</div>
-                    <span class="ml-2 text-sm font-medium">Generate</span>
-                </div>
-                <div class="w-8 h-1 bg-gray-300"></div>
-                <div class="flex items-center">
-                    <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold"
-                         :class="step >= 7 ? 'step-active' : 'step-inactive'">7</div>
-                    <span class="ml-2 text-sm font-medium">Track</span>
-                </div>
-            </div>
-        </div>        <!-- Alert Messages -->
-        <div x-show="alert.show" x-transition class="mb-6">
-            <div class="p-4 rounded-md" :class="alert.type === 'error' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'">
-                <span x-text="alert.message"></span>
-            </div>
+        <!-- Main Navigation -->
+        <div class="mb-8 bg-white rounded-lg shadow-sm p-2 max-w-xl mx-auto" x-show="view !== 'nameEntry' && view !== 'paragraphSelection'">
+             <nav class="flex justify-center space-x-2 sm:space-x-4">
+                <button @click="navigateTo('dashboard')" class="px-3 py-2 text-sm font-medium border-b-2 transition" :class="mainView === 'dashboard' ? 'nav-active' : 'nav-inactive'">My Resumes</button>
+                <button @click="navigateTo('scrapedJDs')" class="px-3 py-2 text-sm font-medium border-b-2 transition" :class="mainView === 'scrapedJDs' ? 'nav-active' : 'nav-inactive'">Scraped JDs</button>
+                <button @click="navigateTo('resultsHub')" class="px-3 py-2 text-sm font-medium border-b-2 transition" :class="mainView === 'resultsHub' ? 'nav-active' : 'nav-inactive'">AI Results Hub</button>
+                <button @click="navigateTo('applications')" class="px-3 py-2 text-sm font-medium border-b-2 transition" :class="mainView === 'applications' ? 'nav-active' : 'nav-inactive'">My Applications</button>
+            </nav>
         </div>
 
-        <!-- Step 1: User Information -->
-        <div x-show="step === 1" class="fade-in">
-            <div class="bg-white rounded-lg shadow-md p-6 max-w-2xl mx-auto">
-                <h2 class="text-2xl font-semibold mb-4">👤 Your Information</h2>
-                <p class="text-gray-600 mb-6">Enter your name to personalize your resume files</p>
-                
-                <div class="space-y-4">
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">First Name</label>
-                            <input type="text" x-model="userFirstName" placeholder="Enter your first name"
-                                   class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+        <!-- VIEWS -->
+        <div x-show="view !== 'nameEntry' && view !== 'paragraphSelection'">
+
+            <!-- Step 1: Main Hub / Dashboard -->
+            <div x-show="mainView === 'dashboard' && view === 'dashboard'" class="fade-in space-y-10">
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <h2 class="text-2xl font-semibold mb-4 border-b pb-3">Upload a New Resume</h2>
+                    <div class="grid md:grid-cols-2 gap-6 items-center">
+                        <div class="space-y-4">
+                            <input type="text" x-model="newResumeName" placeholder="e.g., My Main Tech Resume" class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500">
+                            <button @click="triggerFileUpload()" :disabled="!newResumeName.trim()" class="w-full bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 disabled:opacity-50 font-semibold">Select .DOCX File & Upload</button>
                         </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">Last Name</label>
-                            <input type="text" x-model="userLastName" placeholder="Enter your last name"
-                                   class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <div @dragover.prevent="isDragging = true" @dragleave.prevent="isDragging = false" @drop.prevent="handleFileDrop($event)" class="border-2 border-dashed rounded-lg p-8 text-center h-full flex flex-col justify-center" :class="{ 'drag-over': isDragging }">
+                            <input type="file" id="resumeFileInput" @change="handleFileSelect($event)" class="hidden" accept=".docx">
+                            <p class="text-gray-500">...or drag and drop file here.</p>
+                            <p x-show="fileToUpload" class="mt-2 text-sm font-medium text-green-600" x-text="fileToUpload ? fileToUpload.name : ''"></p>
                         </div>
                     </div>
-                    
-                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                        <p class="text-sm text-blue-800">
-                            <strong>File Naming:</strong> Your resumes will be saved as 
-                            <span class="font-mono bg-white px-2 py-1 rounded" x-text="getFileName() + '_COMPANYNAME_RESUME.docx'"></span>
-                        </p>
-                    </div>
                 </div>
-
-                <div class="mt-6 flex justify-end">
-                    <button @click="saveUserInfo()" 
-                            :disabled="!userFirstName || !userLastName"
-                            class="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed">
-                        Continue to Upload
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Step 2: Upload Resume -->
-        <div x-show="step === 2" class="fade-in">
-            <div class="bg-white rounded-lg shadow-md p-6 max-w-2xl mx-auto">
-                <h2 class="text-2xl font-semibold mb-4">Upload Your Resume</h2>
-                <div class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
-                    <input type="file" id="resumeFile" accept=".docx" @change="handleFileUpload" class="hidden">
-                    <label for="resumeFile" class="cursor-pointer">
-                        <div class="text-gray-400 mb-4">
-                            <svg class="mx-auto h-12 w-12" stroke="currentColor" fill="none" viewBox="0 0 48 48">
-                                <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                            </svg>
-                        </div>
-                        <p class="text-lg font-medium text-gray-900">Click to upload your resume</p>
-                        <p class="text-sm text-gray-500">DOCX files only</p>
-                    </label>
-                </div>
-                <div x-show="uploadProgress" class="mt-4">
-                    <div class="bg-blue-200 rounded-full h-2">
-                        <div class="bg-blue-600 h-2 rounded-full transition-all duration-300" :style="'width: ' + uploadProgress + '%'"></div>
+                <div>
+                    <h2 class="text-2xl font-semibold mb-4">Your Resumes</h2>
+                    <div x-show="resumes.length === 0" class="text-center bg-white rounded-lg shadow p-8"><p class="text-gray-500">No resumes uploaded yet.</p></div>
+                    <div x-show="resumes.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <template x-for="resume in resumes" :key="resume.id">
+                            <div class="bg-white rounded-lg shadow-md p-5 flex flex-col justify-between hover:shadow-xl transition-shadow">
+                                <div>
+                                    <h3 class="font-bold text-lg text-gray-800" x-text="resume.resume_name"></h3>
+                                    <p class="text-xs text-gray-500 mb-4" x-text="'Uploaded: ' + new Date(resume.created_date).toLocaleDateString()"></p>
+                                </div>
+                                <div class="flex flex-col space-y-2 mt-4">
+                                    <button @click="startCustomization(resume)" class="w-full bg-green-500 text-white px-4 py-2 rounded-md hover:bg-green-600 text-sm font-semibold">🚀 Use this Resume</button>
+                                    <button @click="editSelections(resume.id)" class="w-full bg-gray-200 text-gray-800 px-4 py-2 rounded-md hover:bg-gray-300 text-sm">✏️ Edit Selections</button>
+                                    <button @click="confirmDelete(resume.id, 'resume')" class="w-full bg-red-500 text-white px-4 py-2 rounded-md hover:bg-red-600 text-sm">🗑️ Delete</button>
+                                </div>
+                            </div>
+                        </template>
                     </div>
                 </div>
             </div>
-        </div>
 
-        <!-- Step 3: Select Paragraphs to Customize -->
-        <div x-show="step === 3" class="fade-in">
-            <div class="bg-white rounded-lg shadow-md p-6 max-w-6xl mx-auto">
-                <h2 class="text-2xl font-semibold mb-4">Select Content to Customize</h2>
-                <p class="text-gray-600 mb-4">Check the boxes next to any text you want the AI to enhance for this job application.</p>
-                
-                <div class="grid lg:grid-cols-2 gap-6">
-                    <div>
-                        <h3 class="text-lg font-medium mb-3">Your Resume Content</h3>
-                        <div class="space-y-3 max-h-96 overflow-y-auto border rounded-lg p-4">
-                            <template x-for="paragraph in resumeData.paragraphs || []" :key="paragraph.id">
-                                <label class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
-                                       :class="selectedParagraphIds.includes(paragraph.id) ? 'border-blue-500 bg-blue-50' : 'border-gray-200'">
-                                    <input type="checkbox" 
-                                           :value="paragraph.id" 
-                                           :checked="selectedParagraphIds.includes(paragraph.id)"
-                                           @change="toggleParagraphSelection(paragraph.id)"
-                                           class="mr-3 mt-1 flex-shrink-0">
-                                    <div class="flex-1">
-                                        <div class="flex items-center justify-between mb-1">
-                                            <span class="text-xs font-medium text-blue-600" x-text="paragraph.suggested_type"></span>
-                                            <span class="text-xs text-gray-500" x-text="paragraph.word_count + ' words'"></span>
+            <!-- Scraped JDs Hub -->
+            <div x-show="mainView === 'scrapedJDs'" class="fade-in bg-white rounded-lg shadow-lg p-6">
+                 <h2 class="text-2xl font-semibold mb-4">Scraped Job Descriptions</h2>
+                 <p class="text-gray-600 mb-6 text-sm">Use the browser extension on a job posting page to send jobs here.</p>
+                 <div x-show="scrapedJDs.length === 0" class="text-center p-8"><p class="text-gray-500">No job descriptions have been scraped yet.</p></div>
+                 <div x-show="scrapedJDs.length > 0" class="space-y-4">
+                    <template x-for="jd in scrapedJDs" :key="jd.id">
+                         <div class="border rounded-lg p-4 flex justify-between items-center hover:bg-gray-50">
+                            <div>
+                                <h3 class="font-bold text-lg text-blue-600" x-text="jd.job_title"></h3>
+                                <p class="text-md text-gray-700 font-semibold" x-text="jd.company_name"></p>
+                                <p class="text-xs text-gray-500 mt-1">
+                                    Scraped: <span x-text="new Date(jd.created_date).toLocaleString()"></span> | 
+                                    <a :href="jd.page_url" target="_blank" class="text-blue-500 hover:underline">Source</a>
+                                </p>
+                            </div>
+                            <div class="flex space-x-2 flex-shrink-0 ml-4">
+                                <button @click="useScrapedJD(jd)" class="bg-green-500 text-white px-4 py-2 rounded-md hover:bg-green-600 text-sm font-semibold">Customize</button>
+                                <button @click="confirmDelete(jd.id, 'scraped_jd')" class="bg-red-500 text-white px-3 py-2 rounded-md hover:bg-red-600 text-sm">🗑️</button>
+                            </div>
+                         </div>
+                    </template>
+                 </div>
+            </div>
+
+             <!-- AI Results Hub -->
+            <div x-show="mainView === 'resultsHub'" class="fade-in bg-white rounded-lg shadow-lg p-6">
+                 <h2 class="text-2xl font-semibold mb-4">AI Results Hub</h2>
+                 <div x-show="completedJobs.length === 0 && activeJobs.length === 0" class="text-center p-8"><p class="text-gray-500">No AI jobs run yet. Customize a resume to see results here.</p></div>
+                 <div x-show="completedJobs.length > 0 || activeJobs.length > 0" class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Company</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Created</th>
+                                <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            <!-- Active Jobs -->
+                            <template x-for="job in activeJobs" :key="job.id">
+                                 <tr class="bg-blue-50">
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900" x-text="job.company_name"></td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm">
+                                        <div class="flex items-center space-x-2 text-gray-500">
+                                            <div class="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-blue-500"></div>
+                                            <span>Processing...</span>
                                         </div>
-                                        <p class="text-sm text-gray-800 leading-relaxed" x-text="paragraph.text"></p>
-                                        <div class="flex items-center mt-2 space-x-2">
-                                            <span x-show="paragraph.is_heading" class="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">Heading</span>
-                                            <span x-show="paragraph.is_bold" class="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded">Bold</span>
-                                            <span class="text-xs text-gray-400" x-text="'ID: ' + paragraph.id"></span>
-                                        </div>
-                                    </div>
-                                </label>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="new Date().toLocaleDateString()"></td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium"></td>
+                                 </tr>
                             </template>
-                            <div x-show="!resumeData.paragraphs || resumeData.paragraphs.length === 0" 
-                                 class="text-center text-gray-500 py-8">
-                                <p>No content available. Please upload a resume first.</p>
-                            </div>
-                        </div>
-                        
-                        <div class="mt-4 p-3 bg-blue-50 rounded-lg">
-                            <h4 class="font-medium text-blue-800 mb-2">💡 Selection Tips:</h4>
-                            <ul class="text-sm text-blue-700 space-y-1">
-                                <li>• Select your professional summary or objective</li>
-                                <li>• Choose key experience descriptions</li>
-                                <li>• Include skills and achievements sections</li>
-                                <li>• Avoid selecting headers and contact info</li>
-                            </ul>
-                        </div>
-                    </div>
-                    
-                    <div>
-                        <h3 class="text-lg font-medium mb-3">Selection Summary</h3>
-                        <div class="bg-gray-50 p-4 rounded-lg">
-                            <div class="flex items-center justify-between mb-3">
-                                <span class="font-medium">Selected Paragraphs:</span>
-                                <span class="bg-blue-100 text-blue-800 px-2 py-1 rounded text-sm font-medium" 
-                                      x-text="selectedParagraphIds.length"></span>
-                            </div>
-                            
-                            <div x-show="selectedParagraphIds.length > 0" class="space-y-2">
-                                <template x-for="id in selectedParagraphIds" :key="id">
-                                    <div class="bg-white p-3 rounded border">
-                                        <template x-for="paragraph in resumeData.paragraphs || []">
-                                            <div x-show="paragraph.id === id">
-                                                <div class="flex items-center justify-between mb-1">
-                                                    <span class="text-xs font-medium text-blue-600" x-text="paragraph.suggested_type"></span>
-                                                    <button @click="selectedParagraphIds = selectedParagraphIds.filter(p => p !== id)"
-                                                            class="text-red-500 hover:text-red-700 text-xs">
-                                                        Remove
-                                                    </button>
-                                                </div>
-                                                <p class="text-sm text-gray-700" x-text="paragraph.text.substring(0, 100) + (paragraph.text.length > 100 ? '...' : '')"></p>
-                                            </div>
-                                        </template>
-                                    </div>
-                        </template>
-                    </div>
-                </div>
-
-                <!-- Job Match Score -->
-                <div class="mb-6" x-show="customizations.match_score">
-                    <div class="bg-gradient-to-r from-green-50 to-blue-50 border border-green-200 rounded-lg p-4">
-                        <h3 class="text-lg font-medium mb-3 flex items-center">
-                            🎯 Job Match Analysis
-                        </h3>
-                        <div class="flex items-center space-x-4">
-                            <div class="flex-1">
-                                <div class="flex justify-between items-center mb-2">
-                                    <span class="text-sm font-medium">Match Score</span>
-                                    <span class="text-lg font-bold" 
-                                          :class="customizations.match_score >= 80 ? 'text-green-600' : 
-                                                 customizations.match_score >= 60 ? 'text-yellow-600' : 'text-red-600'"
-                                          x-text="customizations.match_score + '%'"></span>
-                                </div>
-                                <div class="w-full bg-gray-200 rounded-full h-3">
-                                    <div class="h-3 rounded-full transition-all duration-300"
-                                         :class="customizations.match_score >= 80 ? 'bg-green-500' : 
-                                                customizations.match_score >= 60 ? 'bg-yellow-500' : 'bg-red-500'"
-                                         :style="`width: ${customizations.match_score}%`"></div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>                            <div x-show="selectedParagraphIds.length === 0" class="text-center text-gray-500 py-4">
-                                <p>Select paragraphs to see them here</p>
-                            </div>
-                        </div>
-                        
-                        <div class="mt-4">
-                            <h4 class="font-medium mb-2">Quick Select:</h4>
-                            <div class="space-y-2">
-                                <button @click="selectByType('Summary/Objective')" 
-                                        class="w-full text-left px-3 py-2 bg-green-50 border border-green-200 rounded hover:bg-green-100 text-sm">
-                                    📝 Select Summary/Objective
-                                </button>
-                                <button @click="selectByType('Experience Section')" 
-                                        class="w-full text-left px-3 py-2 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100 text-sm">
-                                    💼 Select Experience Content
-                                </button>
-                                <button @click="selectByType('Skills')" 
-                                        class="w-full text-left px-3 py-2 bg-purple-50 border border-purple-200 rounded hover:bg-purple-100 text-sm">
-                                    🔧 Select Skills Content
-                                </button>
-                                <button @click="selectedParagraphIds = []" 
-                                        class="w-full text-left px-3 py-2 bg-red-50 border border-red-200 rounded hover:bg-red-100 text-sm">
-                                    🗑️ Clear All Selections
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="mt-6 flex justify-between">
-                    <button @click="step = 2" class="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600">
-                        Back
-                    </button>
-                    <button @click="proceedToAISetup()" 
-                            :disabled="selectedParagraphIds.length === 0"
-                            class="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed">
-                        Continue to AI Setup (<span x-text="selectedParagraphIds.length"></span> selected)
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Step 4: AI Model Setup -->
-        <div x-show="step === 4" class="fade-in">
-            <div class="bg-white rounded-lg shadow-md p-6 max-w-4xl mx-auto">
-                <h2 class="text-2xl font-semibold mb-4">AI Model Configuration</h2>
-                
-                <!-- Tabs -->
-                <div class="border-b border-gray-200 mb-6">
-                    <nav class="-mb-px flex space-x-8">
-                        <button @click="activeTab = 'basic'" 
-                                :class="activeTab === 'basic' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
-                                class="whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm">
-                            Basic Settings
-                        </button>
-                        <button @click="activeTab = 'advanced'" 
-                                :class="activeTab === 'advanced' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
-                                class="whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm">
-                            Advanced Prompts
-                        </button>
-                    </nav>
-                </div>
-
-                <!-- Basic Tab -->
-                <div x-show="activeTab === 'basic'" class="space-y-4">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-2">Select AI Model</label>
-                        <select x-model="aiModel" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                            <option value="gemini-2.5-flash">Gemini 2.5 Flash (Faster, Most Cost-effective)</option>
-                            <option value="gemini-2.5-pro">Gemini 2.5 Pro (Most Advanced)</option>
-                        </select>
-                        <p class="text-xs text-gray-500 mt-1">
-                            Gemini 2.5 models are the latest and most capable AI models from Google
-                        </p>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-2">Google AI API Key</label>
-                        <input type="password" x-model="apiKey" placeholder="Enter your Google AI API key"
-                               class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                        <p class="text-xs text-gray-500 mt-1">
-                            Get your API key from <a href="https://makersuite.google.com/app/apikey" target="_blank" class="text-blue-500 underline">Google AI Studio</a>
-                        </p>
-                    </div>
-                </div>
-
-                <!-- Advanced Tab -->
-                <div x-show="activeTab === 'advanced'" class="space-y-4">
-                    <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
-                        <p class="text-sm text-yellow-800">
-                            <strong>Advanced Mode:</strong> Customize the AI prompts for paragraph enhancement and cover letter generation. Leave blank to use default prompts.
-                        </p>
-                    </div>
-                    
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-2">Custom Paragraph Enhancement Prompt</label>
-                        <textarea x-model="customParagraphPrompt" 
-                                  placeholder="Leave blank to use default prompt..."
-                                  rows="8"
-                                  class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"></textarea>
-                        <p class="text-xs text-gray-500 mt-1">
-                            This prompt controls how individual resume paragraphs are enhanced. Use placeholders: {PARAGRAPHS}, {JOB_DESCRIPTION}, {COMPANY}
-                        </p>
-                    </div>
-                    
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-2">Custom Cover Letter Prompt</label>
-                        <textarea x-model="customCoverLetterPrompt" 
-                                  placeholder="Leave blank to use default prompt..."
-                                  rows="6"
-                                  class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"></textarea>
-                        <p class="text-xs text-gray-500 mt-1">
-                            This prompt controls cover letter generation. Use placeholders: {RESUME_TEXT}, {JOB_DESCRIPTION}, {COMPANY}
-                        </p>
-                    </div>
-                </div>
-
-                <div class="mt-6 flex justify-between">
-                    <button @click="step = 2" class="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600">
-                        Back
-                    </button>
-                    <button @click="saveAISettings()" 
-                            :disabled="!apiKey"
-                            class="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed">
-                        Continue
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Step 5: Job Description -->
-        <div x-show="step === 5" class="fade-in">
-            <div class="bg-white rounded-lg shadow-md p-6 max-w-2xl mx-auto">
-                <h2 class="text-2xl font-semibold mb-4">Job Description & Company</h2>
-                <div class="space-y-4">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-2">Company Name</label>
-                        <input type="text" x-model="companyName" placeholder="Enter company name"
-                               class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-2">Job Description</label>
-                        <textarea x-model="jobDescription" rows="10" placeholder="Paste the complete job description here..."
-                                  class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"></textarea>
-                    </div>
-                </div>
-                <div class="mt-6 flex justify-between">
-                    <button @click="step = 4" class="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600">
-                        Back
-                    </button>
-                    <button @click="customizeResume()" 
-                            :disabled="!jobDescription || !companyName || isLoading"
-                            class="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center">
-                        <span x-show="isLoading" class="mr-2">
-                            <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                            </svg>
-                        </span>
-                        <span x-text="isLoading ? 'Customizing...' : 'Customize Resume'"></span>
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Step 6: Results and Download -->
-        <div x-show="step === 6" class="fade-in">
-            <div class="bg-white rounded-lg shadow-md p-6 max-w-4xl mx-auto">
-                <h2 class="text-2xl font-semibold mb-4">Customization Results</h2>
-                
-                <!-- Customized Resume Content -->
-                <div class="mb-6">
-                    <h3 class="text-lg font-medium mb-3">Customized Resume Content</h3>
-                    <div class="space-y-4">
-                        <template x-for="(customized, paragraphId) in customizations.customized_paragraphs || {}" :key="paragraphId">
-                            <div class="border rounded-lg p-4">
-                                <div class="flex items-center justify-between mb-2">
-                                    <span class="text-sm font-medium text-blue-600" x-text="'Paragraph ID: ' + paragraphId"></span>
-                                    <span class="text-xs text-gray-500">Enhanced by AI</span>
-                                </div>
-                                <div class="bg-gray-50 p-3 rounded mb-2">
-                                    <p class="text-xs text-gray-600 mb-1">Original:</p>
-                                    <template x-for="paragraph in resumeData.paragraphs || []">
-                                        <p x-show="paragraph.id == paragraphId" class="text-sm text-gray-700" x-text="paragraph.text"></p>
-                                    </template>
-                                </div>
-                                <div class="bg-green-50 p-3 rounded">
-                                    <p class="text-xs text-green-600 mb-1">Enhanced:</p>
-                                    <p class="text-sm text-gray-800 whitespace-pre-line" x-text="customized"></p>
-                                </div>
-                            </div>
-                        </template>
-                        <div x-show="customizations.optimization_notes" class="border rounded-lg p-4 bg-blue-50">
-                            <h4 class="font-semibold text-blue-600 mb-2">🔍 Optimization Notes</h4>
-                            <p class="text-blue-700 text-sm whitespace-pre-line" x-text="customizations.optimization_notes"></p>
-                        </div>
-                    </div>
-                    
-                    <!-- Regeneration Options -->
-                    <div class="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                        <h4 class="font-medium text-blue-800 mb-3">🔄 Regeneration Options</h4>
-                        <p class="text-sm text-blue-700 mb-3">Not satisfied with the results? Regenerate specific sections:</p>
-                        <div class="flex space-x-3">
-                            <button @click="regenerateParagraphs()" 
-                                    :disabled="isGenerating"
-                                    class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:opacity-50 text-sm">
-                                🔄 Regenerate Paragraphs
-                            </button>
-                            <button @click="regenerateCoverLetter()" 
-                                    :disabled="isGenerating"
-                                    class="bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-600 disabled:opacity-50 text-sm">
-                                📝 Regenerate Cover Letter
-                            </button>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Cover Letter -->
-                <div class="mb-6">
-                    <h3 class="text-lg font-medium mb-3">Generated Cover Letter</h3>
-                    <div class="border rounded-lg p-4 bg-gray-50">
-                        <pre class="whitespace-pre-wrap text-gray-700" x-text="customizations.cover_letter"></pre>
-                    </div>
-                </div>
-
-                <!-- Download Section -->
-                <div class="border-t pt-6">
-                    <h3 class="text-lg font-medium mb-3">Download Your Customized Resume</h3>
-                    <div class="flex items-center space-x-4">
-                        <input type="text" x-model="downloadFilename" placeholder="Enter filename"
-                               class="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                        <button @click="generatePDF()" 
-                                :disabled="isGenerating || !downloadFilename"
-                                class="bg-green-500 text-white px-6 py-2 rounded-lg hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center">
-                            <span x-show="isGenerating" class="mr-2">
-                                <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                </svg>
-                            </span>
-                            <span x-text="isGenerating ? 'Generating...' : 'Generate PDF'"></span>
-                        </button>
-                    </div>
-                    <div x-show="downloadUrl" class="mt-4">
-                        <a :href="downloadUrl" download 
-                           class="inline-flex items-center bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600">
-                            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                            </svg>
-                            Download Resume PDF
-                        </a>
-                    </div>
-                </div>
-
-                <!-- Application Tracking -->
-                <div class="mt-6 flex justify-between">
-                    <button @click="step = 5" class="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600">
-                        Back to Job Details
-                    </button>
-                    <div class="flex space-x-3">
-                        <button @click="saveApplication()" class="bg-green-500 text-white px-6 py-2 rounded-lg hover:bg-green-600">
-                            💾 Save Application
-                        </button>
-                        <button @click="startOver()" class="bg-purple-500 text-white px-6 py-2 rounded-lg hover:bg-purple-600">
-                            Start New Customization
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Step 7: Application Tracking -->
-        <div x-show="step === 7" class="fade-in">
-            <div class="bg-white rounded-lg shadow-md p-6 max-w-4xl mx-auto">
-                <h2 class="text-2xl font-semibold mb-4">📋 Application Tracking</h2>
-                
-                <div class="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
-                    <p class="text-green-800">
-                        ✅ Application saved successfully! You can now track its status and view your application history.
-                    </p>
-                </div>
-
-                <!-- Application Details -->
-                <div class="bg-gray-50 rounded-lg p-4 mb-6">
-                    <h3 class="font-semibold mb-3">Current Application</h3>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Company</label>
-                            <p class="text-gray-900" x-text="companyName"></p>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Status</label>
-                            <select x-model="currentApplicationStatus" 
-                                    @change="updateApplicationStatus()"
-                                    class="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500">
-                                <option value="not_applied">📝 Not Applied</option>
-                                <option value="applied">📤 Applied</option>
-                                <option value="interview">🗣️ Interview Scheduled</option>
-                                <option value="offer">🎉 Offer Received</option>
-                                <option value="rejected">❌ Rejected</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="mt-4">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Job Description</label>
-                        <p class="text-gray-900 text-sm bg-white p-3 rounded border max-h-32 overflow-y-auto" x-text="jobDescription"></p>
-                    </div>
-                    
-                    <!-- Download Resume -->
-                    <div class="mt-4 flex space-x-3">
-                        <button @click="downloadResume()" 
-                                class="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 text-sm">
-                            📄 Download Resume
-                        </button>
-                        <button @click="viewAllApplications()" 
-                                class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 text-sm">
-                            📋 View All Applications
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Navigation -->
-                <div class="flex justify-between">
-                    <button @click="step = 6" class="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600">
-                        Back to Results
-                    </button>
-                    <button @click="startOver()" class="bg-purple-500 text-white px-6 py-2 rounded-lg hover:bg-purple-600">
-                        Create New Application
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Step 8: All Applications View -->
-        <div x-show="step === 8" class="fade-in">
-            <div class="bg-white rounded-lg shadow-md p-6 max-w-6xl mx-auto">
-                <h2 class="text-2xl font-semibold mb-4">📋 All Applications</h2>
-                
-                <!-- Application History -->
-                <div class="mb-6">
-                    <div class="flex justify-between items-center mb-4">
-                        <h3 class="font-semibold">Application History</h3>
-                        <button @click="loadApplicationHistory()" 
-                                class="text-blue-500 hover:text-blue-700 text-sm">
-                            🔄 Refresh
-                        </button>
-                    </div>
-                    
-                    <div x-show="applicationHistory.length === 0" class="text-center py-8 text-gray-500">
-                        <p>No applications found. Create your first resume to get started!</p>
-                        <button @click="step = 1" class="mt-4 bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600">
-                            Create New Resume
-                        </button>
-                    </div>
-                    
-                    <div x-show="applicationHistory.length > 0" class="border rounded-lg overflow-hidden">
-                        <table class="w-full">
-                            <thead class="bg-gray-50">
-                                <tr>
-                                    <th class="px-4 py-3 text-left text-sm font-medium text-gray-700">Company</th>
-                                    <th class="px-4 py-3 text-left text-sm font-medium text-gray-700">Status</th>
-                                    <th class="px-4 py-3 text-left text-sm font-medium text-gray-700">Applied Date</th>
-                                    <th class="px-4 py-3 text-left text-sm font-medium text-gray-700">Last Updated</th>
-                                    <th class="px-4 py-3 text-left text-sm font-medium text-gray-700">Actions</th>
+                            <!-- Completed Jobs -->
+                            <template x-for="job in completedJobs" :key="job.id">
+                                <tr class="hover:bg-gray-50">
+                                    <td @click="viewResults(job.id)" class="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600 hover:text-blue-800 cursor-pointer" x-text="job.company_name"></td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-green-600 font-semibold">Ready to View</td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="new Date(job.timestamp).toLocaleDateString()"></td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                        <button @click="deleteResult(job.id)" class="text-red-600 hover:text-red-900">Discard</button>
+                                    </td>
                                 </tr>
-                            </thead>
-                            <tbody>
-                                <template x-for="app in applicationHistory" :key="app.id">
-                                    <tr class="border-t hover:bg-gray-50">
-                                        <td class="px-4 py-3 text-sm font-medium" x-text="app.company_name"></td>
-                                        <td class="px-4 py-3 text-sm">
-                                            <select :value="app.status" 
-                                                    @change="updateSpecificApplicationStatus(app.id, $event.target.value)"
-                                                    class="text-xs border border-gray-300 rounded px-2 py-1">
-                                                <option value="not_applied">📝 Not Applied</option>
-                                                <option value="applied">📤 Applied</option>
-                                                <option value="interview">🗣️ Interview</option>
-                                                <option value="offer">🎉 Offer</option>
-                                                <option value="rejected">❌ Rejected</option>
-                                            </select>
-                                        </td>
-                                        <td class="px-4 py-3 text-sm" x-text="formatDate(app.created_date)"></td>
-                                        <td class="px-4 py-3 text-sm" x-text="formatDate(app.updated_date)"></td>
-                                        <td class="px-4 py-3 text-sm">
-                                            <button @click="viewApplication(app)" 
-                                                    class="text-blue-500 hover:text-blue-700 text-xs mr-2">
-                                                👁️ View Details
-                                            </button>
-                                            <button @click="deleteApplication(app.id)" 
-                                                    class="text-red-500 hover:text-red-700 text-xs">
-                                                🗑️ Delete
-                                            </button>
-                                        </td>
-                                    </tr>
-                                </template>
-                            </tbody>
-                        </table>
+                            </template>
+                        </tbody>
+                    </table>
+                 </div>
+            </div>
+
+            <!-- Applications Dashboard -->
+            <div x-show="mainView === 'applications'" class="fade-in bg-white rounded-lg shadow-lg p-6">
+                 <h2 class="text-2xl font-semibold mb-4">My Applications</h2>
+                 <div x-show="applications.length === 0" class="text-center p-8"><p class="text-gray-500">No applications saved yet.</p></div>
+                 <div x-show="applications.length > 0" class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Company</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Match</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date Saved</th>
+                                <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            <template x-for="app in applications" :key="app.id">
+                                <tr class="hover:bg-gray-50">
+                                    <td @click="viewApplicationDetails(app.id)" class="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600 hover:text-blue-800 cursor-pointer" x-text="app.company_name"></td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="app.match_score ? app.match_score + '%' : 'N/A'"></td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm">
+                                        <select @change="updateApplication(app.id, { status: $event.target.value })" :value="app.status" class="rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50 text-xs">
+                                            <option value="not_applied">Not Applied</option>
+                                            <option value="applied">Applied</option>
+                                            <option value="interview">Interview</option>
+                                            <option value="offer">Offer</option>
+                                            <option value="rejected">Rejected</option>
+                                        </select>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="new Date(app.created_date).toLocaleDateString()"></td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                        <button @click="confirmDelete(app.id, 'application')" class="text-red-600 hover:text-red-900">Delete</button>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                 </div>
+            </div>
+        </div>
+
+        <!-- FULL PAGE RESULTS VIEW -->
+        <div x-show="view === 'results'" class="fade-in">
+             <div class="bg-white rounded-lg shadow-lg p-6">
+                <!-- Header -->
+                <div class="border-b pb-4 mb-6">
+                    <h2 class="text-3xl font-bold mb-1">AI Customization Results</h2>
+                    <p class="text-gray-600">Review and finalize the results for your application to <strong x-text="activeResult.company_name"></strong>.</p>
+                </div>
+                <!-- Two-Column Layout -->
+                <div class="grid md:grid-cols-2 gap-8">
+                    <!-- Left Column: Paragraphs -->
+                    <div class="flex flex-col">
+                        <h3 class="text-xl font-semibold mb-4">Enhanced Paragraphs</h3>
+                        <div class="space-y-4 flex-grow overflow-y-auto pr-4 border rounded-lg p-4 bg-gray-50 min-h-[50vh]">
+                             <template x-for="(enhanced, original) in activeResult.customized_paragraphs" :key="original">
+                                <div class="border-b pb-4">
+                                   <div class="flex justify-between items-start">
+                                        <div>
+                                           <p class="text-xs text-gray-500 mb-1">Original:</p>
+                                           <p class="text-sm text-gray-600 italic mb-2" x-text="original"></p>
+                                           <p class="text-xs text-green-600 mb-1">Enhanced:</p>
+                                           <p class="text-sm text-gray-800" x-text="enhanced"></p>
+                                        </div>
+                                        <button @click="runCustomization({ result_id: activeResult.id, regenerate: { 'single_paragraph': original } })" title="Regenerate this paragraph" class="ml-4 p-1 text-gray-500 hover:text-blue-600 flex-shrink-0">
+                                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 110 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" /></svg>
+                                        </button>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                    <!-- Right Column: Cover Letter & Score -->
+                    <div class="flex flex-col">
+                        <div class="flex justify-between items-center mb-4">
+                             <h3 class="text-xl font-semibold">Generated Cover Letter</h3>
+                             <button @click="copyToClipboard(activeResult.cover_letter)" title="Copy to clipboard" class="p-1 text-gray-400 hover:text-gray-700">
+                                <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                  <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
+                                </svg>
+                             </button>
+                        </div>
+                        <div class="border rounded-lg p-4 bg-gray-50 flex-grow overflow-y-auto min-h-[50vh]">
+                            <p class="text-sm text-gray-700 whitespace-pre-wrap" x-text="activeResult.cover_letter"></p>
+                        </div>
+                        <div class="mt-6" x-show="activeResult.match_score">
+                            <h3 class="text-lg font-medium mb-3">🎯 Job Match Analysis</h3>
+                            <div class="bg-gray-50 rounded-lg p-4 flex items-center space-x-4 border">
+                                <div class="text-4xl font-bold" :class="activeResult.match_score >= 80 ? 'text-green-500' : 'text-yellow-500'" x-text="activeResult.match_score + '%'"></div>
+                                <div class="w-full bg-gray-200 rounded-full h-4">
+                                    <div class="h-4 rounded-full" :class="activeResult.match_score >= 80 ? 'bg-green-500' : 'bg-yellow-500'" :style="`width: ${activeResult.match_score}%`"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- Regeneration Actions -->
+                <div class="flex space-x-4 my-6">
+                    <button @click="runCustomization({ result_id: activeResult.id, regenerate: 'paragraphs' })" class="text-sm bg-gray-200 text-gray-800 px-4 py-2 rounded-md hover:bg-gray-300">🔄 Regenerate All Paragraphs</button>
+                    <button @click="runCustomization({ result_id: activeResult.id, regenerate: 'cover_letter' })" class="text-sm bg-gray-200 text-gray-800 px-4 py-2 rounded-md hover:bg-gray-300">🔄 Regenerate Cover Letter</button>
+                </div>
+
+                <!-- Actions Footer -->
+                <div class="mt-8 pt-6 border-t flex flex-wrap gap-4 justify-between items-center">
+                    <button @click="navigateTo('resultsHub')" class="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600">Back to Results Hub</button>
+                    <div class="flex space-x-4">
+                         <button @click="downloadCustomizedResume(activeResult)" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 font-semibold">📄 Download Resume</button>
+                         <button @click="saveCurrentApplication()" class="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 font-semibold">💾 Save to My Applications</button>
+                    </div>
+                </div>
+             </div>
+        </div>
+
+        <!-- FULL PAGE APPLICATION DETAIL VIEW -->
+        <div x-show="view === 'applicationDetail'" class="fade-in">
+             <div class="bg-white rounded-lg shadow-lg p-6">
+                <!-- Header -->
+                <div class="border-b pb-4 mb-6 flex justify-between items-center">
+                    <div>
+                        <h2 class="text-3xl font-bold mb-1" x-text="activeApplication.company_name"></h2>
+                        <p class="text-gray-600">Reviewing saved application. Resume used: <strong x-text="activeApplication.resume_name"></strong></p>
+                    </div>
+                    <button @click="navigateTo('applications')" class="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600">Back to Applications</button>
+                </div>
+                <!-- Two-Column Layout -->
+                <div class="grid md:grid-cols-2 gap-8">
+                    <!-- Left Column: Job Description -->
+                    <div class="flex flex-col">
+                        <h3 class="text-xl font-semibold mb-4">Job Description</h3>
+                        <div class="space-y-4 flex-grow overflow-y-auto pr-4 border rounded-lg p-4 bg-gray-50 min-h-[50vh]">
+                            <p class="whitespace-pre-wrap" x-text="activeApplication.job_description"></p>
+                        </div>
+                    </div>
+                    <!-- Right Column: Cover Letter & Score -->
+                    <div class="flex flex-col">
+                        <div class="flex justify-between items-center mb-4">
+                             <h3 class="text-xl font-semibold">Saved Cover Letter</h3>
+                              <button @click="copyToClipboard(activeApplication.cover_letter)" title="Copy to clipboard" class="p-1 text-gray-400 hover:text-gray-700">
+                                <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                  <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
+                                </svg>
+                             </button>
+                        </div>
+                        <div class="border rounded-lg p-4 bg-gray-50 flex-grow overflow-y-auto min-h-[50vh]">
+                            <p class="text-sm text-gray-700 whitespace-pre-wrap" x-text="activeApplication.cover_letter"></p>
+                        </div>
+                        <div class="mt-6" x-show="activeApplication.match_score">
+                            <h3 class="text-lg font-medium mb-3">🎯 Job Match Analysis</h3>
+                            <div class="bg-gray-50 rounded-lg p-4 flex items-center space-x-4 border">
+                                <div class="text-4xl font-bold" :class="activeApplication.match_score >= 80 ? 'text-green-500' : 'text-yellow-500'" x-text="activeApplication.match_score + '%'"></div>
+                                <div class="w-full bg-gray-200 rounded-full h-4">
+                                    <div class="h-4 rounded-full" :class="activeApplication.match_score >= 80 ? 'bg-green-500' : 'bg-yellow-500'" :style="`width: ${activeApplication.match_score}%`"></div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
-                <!-- Navigation -->
-                <div class="flex justify-between">
-                    <button @click="step = 1" class="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600">
-                        🏠 Home
-                    </button>
-                    <button @click="step = 1" class="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600">
-                        ➕ Create New Resume
-                    </button>
+                 <!-- Placeholder for future features -->
+                 <div class="mt-8 pt-6 border-t">
+                    <h3 class="text-xl font-semibold mb-4">Interview Preparation</h3>
+                     <div class="bg-gray-100 p-6 rounded-lg text-center">
+                        <p class="text-gray-500">Interview question generation will be available here soon.</p>
+                    </div>
+                </div>
+
+                <!-- Actions Footer -->
+                <div class="mt-8 pt-6 border-t flex flex-wrap gap-4 justify-end items-center">
+                    <button @click="downloadCustomizedResume(activeApplication)" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 font-semibold">📄 Download Saved Resume</button>
+                </div>
+             </div>
+        </div>
+
+
+        <!-- Step 0: Name Entry Modal -->
+        <div x-show="view === 'nameEntry'" class="fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center z-40 fade-in">
+            <div class="bg-white rounded-lg shadow-xl p-8 max-w-md w-full">
+                <h2 class="text-2xl font-semibold mb-4">Welcome to Resume AI</h2>
+                <p class="text-gray-600 mb-6">Let's start with your name to personalize your resume files.</p>
+                <div class="space-y-4">
+                    <input type="text" x-model="userFirstName" placeholder="First Name" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500">
+                    <input type="text" x-model="userLastName" placeholder="Last Name" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500">
+                </div>
+                <div class="mt-8 flex justify-end">
+                    <button @click="saveUserInfoAndProceed()" :disabled="!userFirstName.trim() || !userLastName.trim()" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50">Save and Continue</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 2: Paragraph Selection -->
+        <div x-show="view === 'paragraphSelection'" class="fade-in">
+            <div class="bg-white rounded-lg shadow-lg p-6 max-w-4xl mx-auto">
+                <h2 class="text-2xl font-semibold mb-1">Select Content to Customize</h2>
+                <p class="text-gray-600 mb-6 border-b pb-4">Editing: <strong x-text="activeResume.resume_name"></strong></p>
+                <div class="space-y-3 max-h-[60vh] overflow-y-auto pr-4">
+                    <template x-for="p in paragraphs" :key="p.id">
+                        <label class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50" :class="selectedParagraphIds.includes(p.id) ? 'border-blue-500 bg-blue-50' : 'border-gray-200'">
+                            <input type="checkbox" :value="p.id" x-model="selectedParagraphIds" class="mr-4 mt-1 h-5 w-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500 flex-shrink-0">
+                            <p class="text-sm text-gray-800" x-text="p.text"></p>
+                        </label>
+                    </template>
+                </div>
+                <div class="mt-6 flex justify-between items-center">
+                    <button @click="navigateTo('dashboard')" class="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600">Back to Dashboard</button>
+                    <button @click="saveSelections()" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700">Save Selections (<span x-text="selectedParagraphIds.length"></span>)</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 3: Customization View -->
+        <div x-show="view === 'customization'" class="fade-in">
+            <div class="bg-white rounded-lg shadow-lg p-8 max-w-3xl mx-auto">
+                <h2 class="text-2xl font-semibold mb-2">Customize Resume</h2>
+                <p class="text-gray-600 mb-6">Using resume: <strong x-text="activeResume.resume_name"></strong></p>
+                <div class="space-y-6">
+                    <input type="text" x-model="companyName" placeholder="Company Name" class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500">
+                    <textarea x-model="jobDescription" rows="8" placeholder="Paste the full job description here..." class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500"></textarea>
+                    <select x-model="aiModel" class="block w-full px-3 py-2 border border-gray-300 bg-white rounded-md shadow-sm focus:outline-none focus:ring-blue-500">
+                        <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fast & Cost-Effective)</option>
+                        <option value="gemini-2.5-pro">Gemini 2.5 Pro (Most Powerful)</option>
+                    </select>
+                </div>
+                <div class="mt-8 flex justify-between">
+                    <button @click="navigateTo('dashboard')" class="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600">Back</button>
+                    <button @click="runCustomization()" :disabled="!companyName.trim() || !jobDescription.trim()" class="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50 font-semibold">✨ Customize with AI</button>
                 </div>
             </div>
         </div>
         
-        <!-- Step 9: Individual Application Details -->
-        <div x-show="step === 9" class="fade-in">
-            <div class="bg-white rounded-lg shadow-md p-6 max-w-4xl mx-auto">
-                <div class="flex items-center justify-between mb-6">
-                    <h2 class="text-2xl font-semibold">📋 Application Details</h2>
-                    <button @click="viewAllApplications()" 
-                            class="text-blue-500 hover:text-blue-700 text-sm">
-                        ← Back to All Applications
-                    </button>
-                </div>
-                
-                <div x-show="selectedApplication">
-                    <!-- Application Info -->
-                    <div class="bg-gray-50 rounded-lg p-6 mb-6">
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div>
-                                <h3 class="font-semibold text-lg mb-4">Application Information</h3>
-                                <div class="space-y-3">
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-700 mb-1">Company</label>
-                                        <p class="text-gray-900" x-text="selectedApplication?.company_name"></p>
-                                    </div>
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-700 mb-1">Status</label>
-                                        <select :value="selectedApplication?.status" 
-                                                @change="updateSelectedApplicationStatus($event)"
-                                                class="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500">
-                                            <option value="not_applied">📝 Not Applied</option>
-                                            <option value="applied">📤 Applied</option>
-                                            <option value="interview">🗣️ Interview Scheduled</option>
-                                            <option value="offer">🎉 Offer Received</option>
-                                            <option value="rejected">❌ Rejected</option>
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-700 mb-1">Applied Date</label>
-                                        <p class="text-gray-900" x-text="formatDate(selectedApplication?.created_date)"></p>
-                                    </div>
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-700 mb-1">Last Updated</label>
-                                        <p class="text-gray-900" x-text="formatDate(selectedApplication?.updated_date)"></p>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <div>
-                                <h3 class="font-semibold text-lg mb-4">Actions</h3>
-                                <div class="space-y-3">
-                                    <button @click="downloadApplicationResume(selectedApplication)" 
-                                            class="w-full bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600">
-                                        📄 Download Resume
-                                    </button>
-                                    <button @click="downloadApplicationCoverLetter(selectedApplication)" 
-                                            class="w-full bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600">
-                                        📝 Download Cover Letter
-                                    </button>
-                                    <button @click="deleteApplication(selectedApplication.id)" 
-                                            class="w-full bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600">
-                                        🗑️ Delete Application
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Job Description -->
-                    <div class="bg-white border rounded-lg p-6 mb-6">
-                        <h3 class="font-semibold text-lg mb-4">Job Description</h3>
-                        <div class="bg-gray-50 p-4 rounded-lg max-h-64 overflow-y-auto">
-                            <p class="text-gray-900 text-sm whitespace-pre-wrap" x-text="selectedApplication?.job_description"></p>
-                        </div>
-                    </div>
-                    
-                    <!-- Cover Letter -->
-                    <div class="bg-white border rounded-lg p-6">
-                        <h3 class="font-semibold text-lg mb-4">Generated Cover Letter</h3>
-                        <div x-show="selectedApplication?.cover_letter" class="bg-gray-50 p-4 rounded-lg max-h-64 overflow-y-auto">
-                            <p class="text-gray-900 text-sm whitespace-pre-wrap" x-text="selectedApplication?.cover_letter"></p>
-                        </div>
-                        <div x-show="!selectedApplication?.cover_letter" class="bg-yellow-50 p-4 rounded-lg border border-yellow-200">
-                            <p class="text-yellow-800 text-sm">No cover letter found for this application. This might be because:</p>
-                            <ul class="text-yellow-700 text-xs mt-2 ml-4 list-disc">
-                                <li>The application was saved before cover letter generation was completed</li>
-                                <li>The customizations file was not found</li>
-                                <li>An error occurred during cover letter generation</li>
-                            </ul>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
     </div>
 
     <script>
         function resumeApp() {
             return {
-                step: 1,
-                uploadProgress: 0,
-                resumeData: {},
-                selectedParagraphIds: [],
-                selectedSections: [],
-                aiModel: 'gemini-2.5-flash',
-                apiKey: '',
-                jobDescription: '',
-                companyName: '',
-                customizations: {},
-                downloadFilename: '',
-                actualPdfFilename: '', // Stores the actual PDF filename with .pdf extension
-                downloadUrl: '',
-                activeTab: 'basic',
-                customParagraphPrompt: '',
-                customCoverLetterPrompt: '',
-                currentApplicationId: '',
-                currentApplicationStatus: 'not_applied',
-                applicationHistory: [],
-                selectedApplication: null,
+                // State
+                view: 'dashboard', 
+                mainView: 'dashboard', 
+                isLoading: false,
+                toasts: [],
+                isDragging: false,
+                showDeleteModal: false,
+                itemToDelete: { id: null, type: '' },
+                deleteContext: '',
+                socket: null,
+                userSessionId: null,
+                showResumeSelectionModal: false, // For new modal
+                jdToUse: null, // For new modal
+                
+                // Job & Result Management
+                activeJobs: [], 
+                completedJobs: [],
+                activeResult: {},
+                scrapedJDs: [],
+
+                // User & Data
                 userFirstName: '',
                 userLastName: '',
-                isLoading: false,
-                isGenerating: false,
-                alert: {
-                    show: false,
-                    type: 'success',
-                    message: ''
-                },
-
-                init() {
-                    this.checkStatus();
-                    this.loadUserInfo();
-                    this.loadApplicationHistory();
-                },
-
-                saveUserInfo() {
-                    if (!this.userFirstName || !this.userLastName) {
-                        this.showAlert('error', 'Please enter both first and last name.');
-                        return;
-                    }
-                    
-                    // Save to localStorage
-                    localStorage.setItem('userFirstName', this.userFirstName);
-                    localStorage.setItem('userLastName', this.userLastName);
-                    
-                    // Save to backend session
-                    fetch('/save_user_info', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            first_name: this.userFirstName,
-                            last_name: this.userLastName
-                        })
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.error) {
-                            this.showAlert('error', data.error);
-                        } else {
-                            this.step = 2;
-                            this.showAlert('success', 'User information saved!');
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Error saving user info:', error);
-                        // Still proceed to next step if backend save fails
-                        this.step = 2;
-                        this.showAlert('success', 'User information saved locally!');
-                    });
-                },
-
-                loadUserInfo() {
-                    // Load from localStorage if available
-                    const savedFirstName = localStorage.getItem('userFirstName');
-                    const savedLastName = localStorage.getItem('userLastName');
-                    
-                    if (savedFirstName && savedLastName) {
-                        this.userFirstName = savedFirstName;
-                        this.userLastName = savedLastName;
-                    }
-                },
-
-                getFileName() {
-                    if (!this.userFirstName || !this.userLastName) {
-                        return 'FNAME_LNAME';
-                    }
-                    return `${this.userFirstName.toUpperCase()}_${this.userLastName.toUpperCase()}`;
-                },
-
-                toggleParagraphSelection(paragraphId) {
-                    // Ensure paragraphId is an integer
-                    const id = parseInt(paragraphId);
-                    const index = this.selectedParagraphIds.indexOf(id);
-                    
-                    if (index > -1) {
-                        // Remove if already selected
-                        this.selectedParagraphIds.splice(index, 1);
-                    } else {
-                        // Add if not selected
-                        this.selectedParagraphIds.push(id);
-                    }
-                },
-
+                resumes: [],
+                applications: [],
+                activeApplication: {},
+                newResumeName: '',
+                fileToUpload: null,
+                activeResume: {},
+                paragraphs: [],
+                selectedParagraphIds: [],
+                companyName: '',
+                jobDescription: '',
+                aiModel: 'gemini-2.5-flash',
+                scrapedJdIdToCredit: null,
+                
+                // --- INITIALIZATION ---
+                init() { this.checkStatus(); this.loadUserInfoFromLocalStorage(); this.initSocketIO(); },
                 async checkStatus() {
-                    try {
-                        const response = await fetch('/status');
-                        const data = await response.json();
-                        
-                        if (data.has_resume) {
-                            this.resumeData = data.sections;
-                            this.selectedSections = data.selected_sections || [];
-                            this.aiModel = data.ai_model || 'gemini-2.5-flash';
-                            
-                            if (data.has_selections && data.has_api_key) {
-                                this.step = 5;
-                            } else if (data.has_selections) {
-                                this.step = 4;
-                            } else {
-                                this.step = 3;
-                            }
-                        }
-                    } catch (error) {
-                        console.error('Error checking status:', error);
-                    }
-                },
-
-                async handleFileUpload(event) {
-                    const file = event.target.files[0];
-                    if (!file) return;
-
-                    const formData = new FormData();
-                    formData.append('resume', file);
-
-                    try {
-                        this.uploadProgress = 50;
-                        const response = await fetch('/upload', {
-                            method: 'POST',
-                            body: formData
-                        });
-
-                        if (response.ok) {
-                            const data = await response.json();
-                            this.resumeData = data.resume_data;
-                            this.uploadProgress = 100;
-                            this.showAlert('success', 'Resume uploaded successfully!');
-                            setTimeout(() => {
-                                this.step = 3;
-                                this.uploadProgress = 0;
-                            }, 1000);
-                        } else {
-                            const error = await response.json();
-                            this.showAlert('error', error.error);
-                        }
-                    } catch (error) {
-                        this.showAlert('error', 'Upload failed. Please try again.');
-                    }
-                },
-
-                async proceedToAISetup() {
-                    if (this.selectedParagraphIds.length === 0) {
-                        this.showAlert('error', 'Please select at least one paragraph to customize.');
-                        return;
-                    }
-                    
-                    // Save selections to backend session
-                    try {
-                        const response = await fetch('/save_selections', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify({
-                                selected_paragraph_ids: this.selectedParagraphIds,
-                                ai_model: this.aiModel
-                            })
-                        });
-                        
-                        if (response.ok) {
-                            this.step = 4;
-                        } else {
-                            this.showAlert('error', 'Failed to save selections. Please try again.');
-                        }
-                    } catch (error) {
-                        this.showAlert('error', 'Failed to save selections. Please try again.');
-                    }
-                },
-
-                selectByType(paragraphType) {
-                    // Find all paragraphs with the given suggested type
-                    const matchingParagraphs = (this.resumeData.paragraphs || [])
-                        .filter(p => p.suggested_type === paragraphType)
-                        .map(p => p.id);
-                    
-                    // Add to selection (avoid duplicates)
-                    matchingParagraphs.forEach(id => {
-                        if (!this.selectedParagraphIds.includes(id)) {
-                            this.selectedParagraphIds.push(id);
-                        }
-                    });
-                },
-
-                async saveAISettings() {
-                    if (!this.apiKey) {
-                        this.showAlert('error', 'Please enter your API key.');
-                        return;
-                    }
-
-                    try {
-                        const response = await fetch('/save_selections', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify({
-                                selected_paragraph_ids: this.selectedParagraphIds,
-                                ai_model: this.aiModel,
-                                api_key: this.apiKey,
-                                custom_paragraph_prompt: this.customParagraphPrompt,
-                                custom_cover_letter_prompt: this.customCoverLetterPrompt
-                            })
-                        });
-
-                        if (response.ok) {
-                            this.step = 5;
-                        } else {
-                            this.showAlert('error', 'Failed to save settings.');
-                        }
-                    } catch (error) {
-                        this.showAlert('error', 'Failed to save settings.');
-                    }
-                },
-
-                async customizeResume() {
-                    if (!this.jobDescription || !this.companyName) {
-                        this.showAlert('error', 'Please fill in all fields.');
-                        return;
-                    }
-
                     this.isLoading = true;
                     try {
-                        const response = await fetch('/customize', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify({
-                                job_description: this.jobDescription,
-                                company_name: this.companyName,
-                                selected_paragraph_ids: this.selectedParagraphIds,
-                                ai_model: this.aiModel
-                            })
-                        });
-
-                        if (response.ok) {
-                            const data = await response.json();
-                            this.customizations = data.customizations;
-                            this.customizations.customizations_file = data.customizations_file; // Store the file path
-                            this.downloadFilename = `${this.getFileName()}_${this.companyName.toUpperCase().replace(/\s+/g, '_')}_RESUME`;
-                            this.step = 6;
+                        const response = await fetch('/api/status');
+                        const data = await response.json();
+                        this.userSessionId = data.session_id;
+                        if (data.has_set_name) {
+                            this.navigateTo('dashboard');
                         } else {
-                            const error = await response.json();
-                            this.showAlert('error', error.error);
+                            this.view = 'nameEntry';
                         }
-                    } catch (error) {
-                        this.showAlert('error', 'Customization failed. Please try again.');
-                    } finally {
-                        this.isLoading = false;
-                    }
+                    } catch (error) { this.showToast('error', 'Could not connect to server.'); } 
+                    finally { this.isLoading = false; }
                 },
-
-                async regenerateParagraphs() {
-                    this.isGenerating = true;
-                    try {
-                        const response = await fetch('/customize', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify({
-                                job_description: this.jobDescription,
-                                company_name: this.companyName,
-                                selected_paragraph_ids: this.selectedParagraphIds,
-                                ai_model: this.aiModel,
-                                regenerate: 'paragraphs'
-                            })
-                        });
-
-                        if (response.ok) {
-                            const data = await response.json();
-                            this.customizations.customized_paragraphs = data.customizations.customized_paragraphs;
-                            this.customizations.customizations_file = data.customizations_file; // Update the file path
-                            this.showAlert('success', 'Paragraphs regenerated successfully!');
-                        } else {
-                            const error = await response.json();
-                            this.showAlert('error', error.error);
-                        }
-                    } catch (error) {
-                        this.showAlert('error', 'Regeneration failed. Please try again.');
-                    } finally {
-                        this.isGenerating = false;
-                    }
+                loadUserInfoFromLocalStorage() {
+                    this.userFirstName = localStorage.getItem('userFirstName') || '';
+                    this.userLastName = localStorage.getItem('userLastName') || '';
+                    const savedJobs = localStorage.getItem('completedJobs');
+                    if (savedJobs) this.completedJobs = JSON.parse(savedJobs);
                 },
-
-                async regenerateCoverLetter() {
-                    this.isGenerating = true;
-                    try {
-                        const response = await fetch('/customize', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify({
-                                job_description: this.jobDescription,
-                                company_name: this.companyName,
-                                selected_paragraph_ids: this.selectedParagraphIds,
-                                ai_model: this.aiModel,
-                                regenerate: 'cover_letter'
-                            })
-                        });
-
-                        if (response.ok) {
-                            const data = await response.json();
-                            this.customizations.cover_letter = data.customizations.cover_letter;
-                            this.customizations.match_score = data.customizations.match_score;
-                            this.customizations.customizations_file = data.customizations_file; // Update the file path
-                            this.showAlert('success', 'Cover letter regenerated successfully!');
-                        } else {
-                            const error = await response.json();
-                            this.showAlert('error', error.error);
-                        }
-                    } catch (error) {
-                        this.showAlert('error', 'Regeneration failed. Please try again.');
-                    } finally {
-                        this.isGenerating = false;
-                    }
-                },
-
-                async generatePDF() {
-                    if (!this.downloadFilename) {
-                        this.showAlert('error', 'Please enter a filename.');
-                        return;
-                    }
-
-                    this.isGenerating = true;
-                    try {
-                        const response = await fetch('/generate_pdf', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify({
-                                filename: this.downloadFilename
-                            })
-                        });
-
-                        if (response.ok) {
-                            const data = await response.json();
-                            this.downloadUrl = data.download_url;
-                            this.actualPdfFilename = data.filename; // Store the actual PDF filename for saving applications
-                            this.showAlert('success', 'PDF generated successfully!');
-                        } else {
-                            const error = await response.json();
-                            this.showAlert('error', error.error);
-                        }
-                    } catch (error) {
-                        this.showAlert('error', 'PDF generation failed. Please try again.');
-                    } finally {
-                        this.isGenerating = false;
-                    }
-                },
-
-                async saveApplication() {
-                    try {
-                        console.log('=== SAVE APPLICATION DEBUG ===');
-                        console.log('Company Name:', this.companyName);
-                        console.log('Customizations object:', this.customizations);
-                        console.log('Customizations file path:', this.customizations.customizations_file);
-                        console.log('Actual PDF filename:', this.actualPdfFilename);
-                        console.log('Download filename:', this.downloadFilename);
-                        console.log('================================');
-                        
-                        const response = await fetch('/save_application', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify({
-                                company_name: this.companyName,
-                                job_description: this.jobDescription,
-                                customizations_file: this.customizations.customizations_file || '',
-                                resume_file: this.actualPdfFilename || this.downloadFilename || ''
-                            })
-                        });
-
-                        if (response.ok) {
-                            const data = await response.json();
-                            this.currentApplicationId = data.application_id;
-                            await this.loadApplicationHistory();
-                            this.step = 7;
-                            this.showAlert('success', 'Application saved successfully!');
-                        } else {
-                            const error = await response.json();
-                            this.showAlert('error', error.error);
-                        }
-                    } catch (error) {
-                        this.showAlert('error', 'Failed to save application. Please try again.');
-                    }
-                },
-
-                async loadApplicationHistory() {
-                    try {
-                        const response = await fetch('/applications');
-                        if (response.ok) {
-                            const data = await response.json();
-                            this.applicationHistory = data.applications.reverse(); // Show newest first
-                        }
-                    } catch (error) {
-                        console.error('Failed to load application history:', error);
-                    }
-                },
-
-                async updateSpecificApplicationStatus(appId, newStatus) {
-                    try {
-                        const response = await fetch(`/applications/${appId}/status`, {
-                            method: 'PUT',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify({
-                                status: newStatus
-                            })
-                        });
-
-                        if (response.ok) {
-                            await this.loadApplicationHistory();
-                            this.showAlert('success', 'Status updated successfully!');
-                        } else {
-                            this.showAlert('error', 'Failed to update status.');
-                        }
-                    } catch (error) {
-                        this.showAlert('error', 'Failed to update status. Please try again.');
-                    }
-                },
-
-                async deleteApplication(appId) {
-                    if (!confirm('Are you sure you want to delete this application?')) {
-                        return;
-                    }
+                initSocketIO() {
+                    this.socket = io();
+                    this.socket.on('connect', () => { console.log('Socket.IO connected!'); });
                     
-                    try {
-                        const response = await fetch(`/applications/${appId}`, {
-                            method: 'DELETE'
-                        });
-                        
-                        if (response.ok) {
-                            this.applicationHistory = this.applicationHistory.filter(app => app.id !== appId);
-                            this.showAlert('success', 'Application deleted successfully!');
-                            // If we're viewing the deleted application, go back to all applications
-                            if (this.step === 9 && this.selectedApplication?.id === appId) {
-                                this.viewAllApplications();
+                    this.socket.on('session_id', (data) => {
+                        this.userSessionId = data.id;
+                    });
+
+                    this.socket.on('task_progress', (data) => { this.showToast('info', data.status); });
+                    
+                    this.socket.on('task_success', async (data) => {
+                        const job = this.activeJobs.find(j => j.id === data.job_id);
+                        if (!job) return;
+
+                        const result = data.result;
+                        if (result.original_paragraph) {
+                            const resultIndex = this.completedJobs.findIndex(r => r.id === job.result_id);
+                            if (resultIndex > -1) {
+                                const updatedParagraphs = { ...this.completedJobs[resultIndex].customized_paragraphs };
+                                updatedParagraphs[result.original_paragraph] = result.enhanced_text;
+                                this.completedJobs[resultIndex].customized_paragraphs = updatedParagraphs;
+                                if(this.activeResult.id === job.result_id) this.activeResult.customized_paragraphs = updatedParagraphs;
+                                this.showToast('success', 'Paragraph regenerated!');
                             }
+                        } else if (result.regenerate) {
+                             const resultIndex = this.completedJobs.findIndex(r => r.id === job.result_id);
+                             if (resultIndex > -1) {
+                                 if(result.regenerate === 'paragraphs') {
+                                     this.completedJobs[resultIndex].customized_paragraphs = result.customized_paragraphs;
+                                     if(this.activeResult.id === job.result_id) this.activeResult.customized_paragraphs = result.customized_paragraphs;
+                                     this.showToast('success', 'Paragraphs regenerated!');
+                                 } else {
+                                     this.completedJobs[resultIndex].cover_letter = result.cover_letter;
+                                     if(this.activeResult.id === job.result_id) this.activeResult.cover_letter = result.cover_letter;
+                                     this.showToast('success', 'Cover letter regenerated!');
+                                 }
+                             }
                         } else {
-                            const error = await response.json();
-                            this.showAlert('error', error.error || 'Failed to delete application');
+                            const newResult = { id: data.job_id, timestamp: Date.now(), ...job, ...data.result };
+                            this.completedJobs.unshift(newResult);
+                            this.showToast('success', `AI result for ${job.company_name} is ready!`);
+                            if (job.scraped_jd_id) this.deleteScrapedJD(job.scraped_jd_id, false);
                         }
-                    } catch (error) {
-                        this.showAlert('error', 'Failed to delete application. Please try again.');
-                    }
+                        localStorage.setItem('completedJobs', JSON.stringify(this.completedJobs));
+                        this.activeJobs = this.activeJobs.filter(j => j.id !== data.job_id);
+                    });
+
+                    this.socket.on('task_error', (data) => {
+                        this.showToast('error', `Task failed: ${data.error}`);
+                        this.activeJobs = this.activeJobs.filter(j => j.id !== data.job_id);
+                    });
+
+                    this.socket.on('download_ready', (data) => {
+                        this.showToast('success', 'Download ready!');
+                        window.location.href = data.download_url;
+                    });
+                },
+                async navigateTo(targetView) {
+                    this.mainView = targetView;
+                    this.view = targetView;
+                    if (targetView === 'dashboard') await this.getResumes();
+                    if (targetView === 'applications') await this.getApplications();
+                    if (targetView === 'scrapedJDs') await this.getScrapedJDs();
                 },
 
-                getStatusText(status) {
-                    const statusMap = {
-                        'not_applied': '📝 Not Applied',
-                        'applied': '📤 Applied',
-                        'interview': '🗣️ Interview',
-                        'offer': '🎉 Offer',
-                        'rejected': '❌ Rejected'
-                    };
-                    return statusMap[status] || status;
-                },
-
-                getStatusColor(status) {
-                    const colorMap = {
-                        'not_applied': 'bg-gray-100 text-gray-700',
-                        'applied': 'bg-blue-100 text-blue-700',
-                        'interview': 'bg-yellow-100 text-yellow-700',
-                        'offer': 'bg-green-100 text-green-700',
-                        'rejected': 'bg-red-100 text-red-700'
-                    };
-                    return colorMap[status] || 'bg-gray-100 text-gray-700';
-                },
-
-                formatDate(dateStr) {
+                // --- USER INFO ---
+                async saveUserInfoAndProceed() {
+                    this.isLoading = true;
+                    localStorage.setItem('userFirstName', this.userFirstName);
+                    localStorage.setItem('userLastName', this.userLastName);
                     try {
-                        const date = new Date(dateStr);
-                        return date.toLocaleDateString();
-                    } catch {
-                        return dateStr;
-                    }
+                        await fetch('/save_user_info', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ first_name: this.userFirstName, last_name: this.userLastName })
+                        });
+                        this.showToast('success', 'Information saved!');
+                        await this.checkStatus();
+                    } catch (error) { this.showToast('error', error.message); } 
+                    finally { this.isLoading = false; }
+                },
+                
+                // --- RESUME MANAGEMENT ---
+                async getResumes() { try { const r = await fetch('/api/resumes'); this.resumes = await r.json(); } catch (e) { this.showToast('error', 'Could not fetch resumes.'); } },
+                handleFileSelect(event) { this.fileToUpload = event.target.files[0]; if (this.newResumeName.trim()) this.uploadNewResume(); },
+                handleFileDrop(event) { this.isDragging = false; this.fileToUpload = event.dataTransfer.files[0]; if (this.newResumeName.trim()) this.uploadNewResume(); else this.showToast('error', 'Please provide a resume name first.'); },
+                triggerFileUpload() { if (!this.newResumeName.trim()) { this.showToast('error', 'Please provide a resume name first.'); return; } document.getElementById('resumeFileInput').click(); },
+                async uploadNewResume() {
+                    if (!this.newResumeName.trim() || !this.fileToUpload) return;
+                    this.isLoading = true;
+                    const formData = new FormData();
+                    formData.append('resume_name', this.newResumeName);
+                    formData.append('resume_file', this.fileToUpload);
+                    formData.append('first_name', this.userFirstName);
+                    formData.append('last_name', this.userLastName);
+                    try {
+                        const response = await fetch('/api/resumes', { method: 'POST', body: formData });
+                        const newResume = await response.json();
+                        if (!response.ok) throw new Error(newResume.error || 'Upload failed.');
+                        this.showToast('success', 'Resume uploaded! Now select paragraphs.');
+                        this.newResumeName = ''; this.fileToUpload = null;
+                        await this.getResumes();
+                        await this.editSelections(newResume.id);
+                    } catch (error) { this.showToast('error', error.message); } 
+                    finally { this.isLoading = false; }
+                },
+                confirmDelete(id, type) { this.itemToDelete = { id, type }; this.deleteContext = type; this.showDeleteModal = true; },
+                async deleteItem() {
+                    this.isLoading = true;
+                    this.showDeleteModal = false;
+                    const { id, type } = this.itemToDelete;
+                    let endpoint = (type === 'resume') ? `/api/resumes/${id}` : (type === 'application') ? `/api/applications/${id}` : (type === 'scraped_jd') ? `/api/scraped-jds/${id}` : '';
+                    if (!endpoint) return;
+
+                    try {
+                        const response = await fetch(endpoint, { method: 'DELETE' });
+                        if (!response.ok) throw new Error(`Failed to delete ${type}.`);
+                        this.showToast('success', `${type.replace('_', ' ')} deleted.`);
+                        if (type === 'resume') this.resumes = this.resumes.filter(r => r.id !== id);
+                        if (type === 'application') this.applications = this.applications.filter(a => a.id !== id);
+                        if (type === 'scraped_jd') this.scrapedJDs = this.scrapedJDs.filter(j => j.id !== id);
+                    } catch (error) { this.showToast('error', error.message); } 
+                    finally { this.isLoading = false; }
                 },
 
-                goToApplications() {
-                    this.loadApplicationHistory();
-                    this.step = 8; // Add a dedicated applications page
+                // --- SCRAPED JD MANAGEMENT ---
+                async getScrapedJDs() { try { const r = await fetch('/api/scraped-jds'); this.scrapedJDs = await r.json(); } catch (e) { this.showToast('error', 'Could not fetch scraped JDs.'); } },
+                async deleteScrapedJD(jdId, showToast = true) {
+                     try {
+                        await fetch(`/api/scraped-jds/${jdId}`, { method: 'DELETE' });
+                        if (showToast) this.showToast('success', `Scraped JD deleted.`);
+                        this.scrapedJDs = this.scrapedJDs.filter(j => j.id !== jdId);
+                    } catch (error) { if (showToast) this.showToast('error', 'Failed to delete scraped JD'); }
                 },
-
-                viewApplication(app) {
-                    this.selectedApplication = app;
-                    this.step = 9;
-                },
-
-                viewAllApplications() {
-                    this.step = 8;
-                    this.loadApplicationHistory();
-                },
-
-                downloadApplicationResume(app) {
-                    if (app.resume_file) {
-                        window.open(`/uploads/${app.resume_file}`, '_blank');
+                useScrapedJD(jd) {
+                    if (this.resumes.length === 0) { this.showToast('error', 'You must upload at least one resume first.'); return; }
+                    if (this.resumes.length === 1) {
+                        this.startCustomizationWithSelectedResume(this.resumes[0], jd);
                     } else {
-                        this.showAlert('error', 'Resume file not found');
+                        this.jdToUse = jd;
+                        this.showResumeSelectionModal = true;
                     }
                 },
-
-                downloadApplicationCoverLetter(app) {
-                    if (app.cover_letter) {
-                        // Create a downloadable text file
-                        const blob = new Blob([app.cover_letter], { type: 'text/plain' });
-                        const url = window.URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = `${app.company_name}_Cover_Letter.txt`;
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                        window.URL.revokeObjectURL(url);
-                    } else {
-                        this.showAlert('error', 'Cover letter not found');
-                    }
+                startCustomizationWithSelectedResume(resume, jd = null) {
+                    const jobData = jd || this.jdToUse;
+                    this.showToast('info', `Using resume: ${resume.resume_name}`);
+                    this.activeResume = resume;
+                    this.companyName = jobData.company_name;
+                    this.jobDescription = jobData.job_description;
+                    this.scrapedJdIdToCredit = jobData.id;
+                    this.showResumeSelectionModal = false;
+                    this.jdToUse = null;
+                    this.view = 'customization';
                 },
 
-                downloadResume() {
-                    if (this.downloadUrl) {
-                        window.open(this.downloadUrl, '_blank');
-                    } else {
-                        this.showAlert('error', 'Resume not generated yet');
-                    }
+                // --- PARAGRAPH SELECTION ---
+                async editSelections(resumeId) {
+                    this.isLoading = true;
+                    try {
+                        const response = await fetch(`/api/resumes/${resumeId}`);
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.error || 'Could not load resume details.');
+                        this.activeResume = data;
+                        this.paragraphs = data.paragraphs || [];
+                        this.selectedParagraphIds = data.selected_paragraph_ids || [];
+                        this.view = 'paragraphSelection';
+                    } catch (error) { this.showToast('error', error.message); this.view = 'dashboard'; } 
+                    finally { this.isLoading = false; }
+                },
+                async saveSelections() {
+                    this.isLoading = true;
+                    try {
+                        await fetch(`/api/resumes/${this.activeResume.id}/selections`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ selected_paragraph_ids: this.selectedParagraphIds })
+                        });
+                        this.showToast('success', 'Selections saved.');
+                        this.navigateTo('dashboard');
+                    } catch (error) { this.showToast('error', 'Failed to save selections.'); } 
+                    finally { this.isLoading = false; }
                 },
 
-                updateSelectedApplicationStatus(event) {
-                    const newStatus = event.target.value;
-                    this.updateApplicationStatus(this.selectedApplication.id, newStatus);
-                    this.selectedApplication.status = newStatus;
+                // --- CUSTOMIZATION & RESULTS ---
+                startCustomization(resume) { this.activeResume = resume; this.companyName = ''; this.jobDescription = ''; this.scrapedJdIdToCredit = null; this.view = 'customization'; },
+                async runCustomization(options = {}) {
+                    this.isLoading = true;
+                    let payload;
+                    try {
+                        if(options.regenerate) {
+                            const result = this.completedJobs.find(r => r.id === options.result_id);
+                            if(!result) throw new Error('Could not find original result for regeneration.');
+                             payload = { resume_id: result.resume_id, company_name: result.company_name, job_description: result.job_description, ai_model: this.aiModel, regenerate: options.regenerate, result_id: options.result_id };
+                        } else {
+                            payload = { resume_id: this.activeResume.id, company_name: this.companyName, job_description: this.jobDescription, ai_model: this.aiModel, scraped_jd_id: this.scrapedJdIdToCredit };
+                        }
+                        const response = await fetch('/customize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.error || 'AI customization failed.');
+                        
+                        this.activeJobs.unshift({ id: data.job_id, ...payload });
+                        this.showToast('info', `Started AI job for ${payload.company_name}...`);
+                        if(!options.regenerate) this.navigateTo('resultsHub');
+                        this.scrapedJdIdToCredit = null;
+
+                    } catch (error) { this.showToast('error', error.message); } 
+                    finally { this.isLoading = false; }
+                },
+                viewResults(jobId) {
+                    const result = this.completedJobs.find(j => j.id === jobId);
+                    if (result) { this.activeResult = { ...result }; this.view = 'results'; }
+                },
+                 deleteResult(jobId) {
+                    this.completedJobs = this.completedJobs.filter(j => j.id !== jobId);
+                    localStorage.setItem('completedJobs', JSON.stringify(this.completedJobs));
+                    this.showToast('success', 'Result discarded.');
+                },
+                async saveCurrentApplication() {
+                    this.isLoading = true;
+                    try {
+                        const payload = { resume_id: this.activeResult.resume_id, company_name: this.activeResult.company_name, job_description: this.activeResult.job_description, cover_letter: this.activeResult.cover_letter, match_score: this.activeResult.match_score, customized_paragraphs: this.activeResult.customized_paragraphs };
+                        const response = await fetch('/api/applications', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+                        if (!response.ok) throw new Error('Failed to save application.');
+                        this.showToast('success', 'Application saved!');
+                        this.deleteResult(this.activeResult.id);
+                        this.navigateTo('applications');
+                    } catch (error) { this.showToast('error', error.message); } 
+                    finally { this.isLoading = false; }
+                },
+                async downloadCustomizedResume(source) {
+                    this.showToast('info', 'Your download is being prepared...');
+                    try {
+                        const payload = { resume_id: source.resume_id, customizations: { customized_paragraphs: source.customized_paragraphs }, company_name: source.company_name };
+                        await fetch('/api/download_resume', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+                    } catch (error) { this.showToast('error', 'Failed to queue download.'); }
+                },
+                
+                // --- APPLICATION MANAGEMENT ---
+                async getApplications() { try { const r = await fetch('/api/applications'); this.applications = await r.json(); } catch (e) { this.showToast('error', 'Could not fetch applications.'); } },
+                 async viewApplicationDetails(appId) {
+                    this.isLoading = true;
+                    try {
+                        const response = await fetch(`/api/applications/${appId}`);
+                        const data = await response.json();
+                        if (!response.ok) throw new Error('Could not fetch application details.');
+                        const resume = this.resumes.find(r => r.id === data.resume_id);
+                        data.resume_name = resume ? resume.resume_name : 'Unknown';
+                        this.activeApplication = data;
+                        this.view = 'applicationDetail';
+                    } catch (error) { this.showToast('error', error.message); } 
+                    finally { this.isLoading = false; }
+                },
+                async updateApplication(appId, payload) {
+                    try {
+                        await fetch(`/api/applications/${appId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                        this.showToast('success', 'Application updated.');
+                    } catch (error) { this.showToast('error', 'Could not update application.'); }
                 },
 
-                startOver() {
-                    this.step = 5;
-                    this.jobDescription = '';
-                    this.companyName = '';
-                    this.customizations = {};
-                    this.downloadUrl = '';
+                // --- UTILITIES ---
+                showToast(type, message, duration = 5000) {
+                    const id = Date.now();
+                    this.toasts.push({ id, type, message });
+                    setTimeout(() => { this.toasts = this.toasts.filter(t => t.id !== id); }, duration);
                 },
-
-                showAlert(type, message) {
-                    this.alert = { show: true, type, message };
-                    setTimeout(() => {
-                        this.alert.show = false;
-                    }, 5000);
+                copyToClipboard(text) {
+                    if (!text) return;
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.style.position = 'fixed'; ta.style.opacity = 0;
+                    document.body.appendChild(ta);
+                    ta.select();
+                    try { document.execCommand('copy'); this.showToast('success', 'Copied to clipboard!'); } 
+                    catch (err) { this.showToast('error', 'Failed to copy.'); }
+                    document.body.removeChild(ta);
                 }
             }
         }
     </script>
 </body>
 </html>
+
