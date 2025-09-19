@@ -5,79 +5,83 @@
   <title>Job Scraper</title>
   <style>
     body {
-      width: 300px;
-      padding: 20px;
+      width: 180px;
+      padding: 5px;
       font-family: Arial, sans-serif;
+      font-size: 13px;
     }
-    
+
     .form-group {
-      margin-bottom: 15px;
+      margin-bottom: 8px;
     }
-    
+
     label {
-      display: block;
-      margin-bottom: 5px;
+      margin-bottom: 2px;
+      font-size: 12px;
       font-weight: bold;
     }
-    
+
     input[type="text"] {
       width: 100%;
-      padding: 8px;
+      padding: 4px 6px;
       border: 1px solid #ddd;
-      border-radius: 4px;
+      border-radius: 2px;
+      font-size: 12px;
       box-sizing: border-box;
     }
-    
+
     button {
-      width: 100%;
-      padding: 10px;
-      margin: 5px 0;
+      width: 48%;
+      padding: 6px 0;
+      margin: 2px 1%;
       border: none;
-      border-radius: 4px;
+      border-radius: 2px;
+      font-size: 12px;
       cursor: pointer;
       font-weight: bold;
     }
-    
+
     button:disabled {
       background-color: #ccc;
       cursor: not-allowed;
     }
-    
+
     #autoParse {
       background-color: #4CAF50;
       color: white;
     }
-    
+
     #autoParse:hover:not(:disabled) {
       background-color: #45a049;
     }
-    
+
     #manualParse {
       background-color: #2196F3;
       color: white;
     }
-    
+
     #manualParse:hover:not(:disabled) {
       background-color: #1976D2;
     }
-    
+
     .status {
-      margin-top: 15px;
-      padding: 10px;
-      border-radius: 4px;
+      margin-top: 6px;
+      padding: 6px;
+      border-radius: 2px;
+      font-size: 12px;
       word-wrap: break-word;
     }
-    
+
     .status-info {
       background-color: #e3f2fd;
       color: #1976d2;
     }
-    
+
     .status-success {
       background-color: #e8f5e8;
       color: #2e7d2e;
     }
-    
+
     .status-error {
       background-color: #ffebee;
       color: #c62828;
@@ -85,18 +89,13 @@
   </style>
 </head>
 <body>
-  <h3>Job Scraper</h3>
-  
   <div class="form-group">
-    <label for="sessionId">Session ID:</label>
-    <input type="text" id="sessionId" placeholder="Enter your session ID">
+    <label for="sessionId">Session:</label>
+    <input type="text" id="sessionId" placeholder="Session ID">
   </div>
-  
-  <button id="autoParse">Auto Parse</button>
-  <button id="manualParse">Manual Parse</button>
-  
+  <button id="autoParse">Auto</button>
+  <button id="manualParse">Manual</button>
   <div id="status" class="status"></div>
-  
   <script src="popup.js"></script>
 </body>
 </html>

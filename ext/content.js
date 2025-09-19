@@ -17,32 +17,33 @@ function injectStyles() {
 
 #resume-ai-prompt {
   position: fixed !important;
-  top: 20px !important;
+  top: 16px !important; /* slightly higher */
   left: 50% !important;
   transform: translateX(-50%) !important;
   background-color: #333 !important;
   color: white !important;
-  padding: 12px 20px !important;
-  border-radius: 8px !important;
+  padding: 7px 14px !important;   /* reduced padding */
+  border-radius: 6px !important;
   z-index: 999999 !important;
-  font-size: 16px !important;
+  font-size: 14px !important;     /* smaller font */
   font-weight: bold !important;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.22) !important;
 }
 
 #resume-ai-counter {
   position: fixed !important;
-  top: 70px !important;
+  top: 46px !important;          /* aligns with new prompt size */
   left: 50% !important;
   transform: translateX(-50%) !important;
   background-color: #2196F3 !important;
   color: white !important;
-  padding: 8px 16px !important;
-  border-radius: 20px !important;
+  padding: 5px 12px !important;  /* reduced padding */
+  border-radius: 14px !important;
   z-index: 999999 !important;
-  font-size: 14px !important;
+  font-size: 12px !important;    /* smaller font */
   font-weight: bold !important;
-}`;
+}
+`;
   document.head.appendChild(style);
 }
 
