@@ -107,10 +107,42 @@ document.addEventListener('DOMContentLoaded', () => {
       scraperFunc = scrapeIndeedPage;
     } else if (hostname.includes('hiringcafe') || hostname.includes('hiring.cafe') || hostname.includes('hiring-cafe')) {
       scraperFunc = scrapeHiringCafePage;
+    } else if (hostname.includes('harri.com')) {
+      scraperFunc = scrapeHarriPage;
     } else {
       setStatus('No auto-scraper available for this site. Try manual selection.', 'error');
       return;
     }
+// Harri.com auto-scraper
+function scrapeHarriPage() {
+  try {
+    // Role
+    const titleEl = document.querySelector('.position-name');
+    // Company
+    const companyEl = document.querySelector('.content[automation="jobLocation"] span');
+    // JD
+    const descriptionEl = document.querySelector('#job_description');
+
+    const missing = [];
+    if (!titleEl) missing.push('title');
+    if (!companyEl) missing.push('company');
+    if (!descriptionEl) missing.push('description');
+    if (missing.length) return { error: `Missing elements: ${missing.join(', ')}. Try manual selection.` };
+
+    // Remove "Description" header if present
+    let jdText = descriptionEl.innerText.trim();
+    jdText = jdText.replace(/^Description\s*\n?/i, '').trim();
+
+    return {
+      job_title: titleEl.innerText.trim(),
+      company_name: companyEl.innerText.trim(),
+      job_description: jdText,
+      page_url: window.location.href,
+    };
+  } catch (e) {
+    return { error: e.toString() };
+  }
+}
 
     chrome.scripting.executeScript({
       target: { tabId: tab.id },

@@ -14,6 +14,7 @@ class Resume(db.Model):
     selected_paragraph_ids = db.Column(db.JSON)
     user_first_name = db.Column(db.String(100))
     user_last_name = db.Column(db.String(100))
+    structured_text = db.Column(db.JSON)
     applications = db.relationship('Application', backref='resume', lazy=True, cascade="all, delete-orphan")
 
     def to_dict(self):
@@ -25,7 +26,7 @@ class Resume(db.Model):
             'user_session_id': self.user_session_id,
             'selected_paragraph_ids': self.selected_paragraph_ids,
             'user_first_name': self.user_first_name,
-            'user_last_name': self.user_last_name
+            'user_last_name': self.user_last_name,
         }
 
 class Application(db.Model):

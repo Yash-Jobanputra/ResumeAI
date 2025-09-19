@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resume AI - Smart Resume Customization</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        .fade-in { animation: fadeIn 0.5s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        [x-cloak] { display: none !important; }
+        .drag-over { border-color: #3b82f6; background-color: #eff6ff; }
+        .nav-active { border-bottom-color: #3b82f6; color: #3b82f6; }
+        .nav-inactive { border-bottom-color: transparent; color: #6b7280; }
+        .toast {
+            animation: slideInRight 0.5s ease-in-out, fadeOut 0.5s ease-in-out 4.5s forwards;
+        }
+        @keyframes slideInRight { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; visibility: hidden; } }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen font-sans" x-data="resumeApp()" x-cloak>
+
+    <!-- Global Components -->
+    <div x-show="isLoading" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50">
+        <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-white"></div>
+    </div>
+    <!-- Toasts / Notifications -->
+    <div class="fixed top-5 right-5 z-50 space-y-3">
+        <template x-for="toast in toasts" :key="toast.id">
+            <div class="toast p-4 rounded-md shadow-lg text-white" :class="{ 'bg-red-500': toast.type === 'error', 'bg-green-500': toast.type === 'success', 'bg-blue-500': toast.type === 'info' }">
+                <span x-text="toast.message"></span>
+            </div>
+        </template>
+    </div>
+    <!-- Delete Modal -->
+    <div x-show="showDeleteModal" class="fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center z-40 fade-in">
+        <div class="bg-white rounded-lg shadow-xl p-8 max-w-md w-full">
+            <h2 class="text-2xl font-semibold mb-4" x-text="deleteContext === 'resume' ? 'Delete Resume' : (deleteContext === 'application' ? 'Delete Application' : 'Delete Scraped JD')"></h2>
+            <p class="text-gray-600 mb-6">Are you sure? This action cannot be undone.</p>
+            <div class="mt-8 flex justify-end space-x-4">
+                <button @click="showDeleteModal = false" class="bg-gray-300 text-gray-800 px-6 py-2 rounded-lg hover:bg-gray-400">Cancel</button>
+                <button @click="deleteItem()" class="bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-red-700">Delete</button>
+            </div>
+        </div>
+    </div>
+    <!-- Resume Selection Modal -->
+    <div x-show="showResumeSelectionModal" class="fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center z-40 fade-in">
+        <div class="bg-white rounded-lg shadow-xl p-8 max-w-lg w-full">
+            <h2 class="text-2xl font-semibold mb-4">Select a Resume to Use</h2>
+            <p class="text-gray-600 mb-6">Which resume would you like to customize for the role at <strong x-text="jdToUse?.company_name"></strong>?</p>
+            <div class="space-y-3 max-h-60 overflow-y-auto">
+                <template x-for="resume in resumes" :key="resume.id">
+                    <button @click="startCustomizationWithSelectedResume(resume)" class="w-full text-left p-3 border rounded-lg hover:bg-gray-100 hover:border-blue-500">
+                        <span class="font-semibold text-gray-800" x-text="resume.resume_name"></span>
+                    </button>
+                </template>
+            </div>
+            <div class="mt-8 flex justify-end">
+                <button @click="showResumeSelectionModal = false" class="bg-gray-300 text-gray-800 px-6 py-2 rounded-lg hover:bg-gray-400">Cancel</button>
+            </div>
+        </div>
+    </div>
+    
+    <div class="container mx-auto px-4 py-8">
+        <!-- Header -->
+        <div class="text-center mb-6">
+            <h1 class="text-5xl font-bold text-gray-800 mb-2">Resume AI</h1>
+            <p class="text-gray-600 text-lg">Your Personal Resume & Application Hub</p>
+            <div x-show="userSessionId" class="mt-2">
+                <p class="text-xs text-gray-500">Your Session ID (for extension): <span @click="copyToClipboard(userSessionId)" class="font-mono bg-gray-200 p-1 rounded cursor-pointer" title="Click to copy" x-text="userSessionId"></span></p>
+            </div>
+        </div>
+
+        <!-- Main Navigation -->
+        <div class="mb-8 bg-white rounded-lg shadow-sm p-2 max-w-xl mx-auto" x-show="view !== 'nameEntry' && view !== 'paragraphSelection'">
+             <nav class="flex justify-center space-x-2 sm:space-x-4">
+                <button @click="navigateTo('dashboard')" class="px-3 py-2 text-sm font-medium border-b-2 transition" :class="mainView === 'dashboard' ? 'nav-active' : 'nav-inactive'">My Resumes</button>
+                <button @click="navigateTo('scrapedJDs')" class="px-3 py-2 text-sm font-medium border-b-2 transition" :class="mainView === 'scrapedJDs' ? 'nav-active' : 'nav-inactive'">Scraped JDs</button>
+                <button @click="navigateTo('resultsHub')" class="px-3 py-2 text-sm font-medium border-b-2 transition" :class="mainView === 'resultsHub' ? 'nav-active' : 'nav-inactive'">AI Results Hub</button>
+                <button @click="navigateTo('applications')" class="px-3 py-2 text-sm font-medium border-b-2 transition" :class="mainView === 'applications' ? 'nav-active' : 'nav-inactive'">My Applications</button>
+            </nav>
+        </div>
+
+        <!-- VIEWS -->
+        <div x-show="view !== 'nameEntry' && view !== 'paragraphSelection'">
+
+            <!-- Step 1: Main Hub / Dashboard -->
+            <div x-show="mainView === 'dashboard' && view === 'dashboard'" class="fade-in space-y-10">
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <h2 class="text-2xl font-semibold mb-4 border-b pb-3">Upload a New Resume</h2>
+                    <div class="grid md:grid-cols-2 gap-6 items-center">
+                        <div class="space-y-4">
+                            <input type="text" x-model="newResumeName" placeholder="e.g., My Main Tech Resume" class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500">
+                            <button @click="triggerFileUpload()" :disabled="!newResumeName.trim()" class="w-full bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 disabled:opacity-50 font-semibold">Select .DOCX File & Upload</button>
+                        </div>
+                        <div @dragover.prevent="isDragging = true" @dragleave.prevent="isDragging = false" @drop.prevent="handleFileDrop($event)" class="border-2 border-dashed rounded-lg p-8 text-center h-full flex flex-col justify-center" :class="{ 'drag-over': isDragging }">
+                            <input type="file" id="resumeFileInput" @change="handleFileSelect($event)" class="hidden" accept=".docx">
+                            <p class="text-gray-500">...or drag and drop file here.</p>
+                            <p x-show="fileToUpload" class="mt-2 text-sm font-medium text-green-600" x-text="fileToUpload ? fileToUpload.name : ''"></p>
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <h2 class="text-2xl font-semibold mb-4">Your Resumes</h2>
+                    <div x-show="resumes.length === 0" class="text-center bg-white rounded-lg shadow p-8"><p class="text-gray-500">No resumes uploaded yet.</p></div>
+                    <div x-show="resumes.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <template x-for="resume in resumes" :key="resume.id">
+                            <div class="bg-white rounded-lg shadow-md p-5 flex flex-col justify-between hover:shadow-xl transition-shadow">
+                                <div>
+                                    <h3 class="font-bold text-lg text-gray-800" x-text="resume.resume_name"></h3>
+                                    <p class="text-xs text-gray-500 mb-4" x-text="'Uploaded: ' + new Date(resume.created_date).toLocaleDateString()"></p>
+                                </div>
+                                <div class="flex flex-col space-y-2 mt-4">
+                                    <button @click="startCustomization(resume)" class="w-full bg-green-500 text-white px-4 py-2 rounded-md hover:bg-green-600 text-sm font-semibold">🚀 Use this Resume</button>
+                                    <button @click="editSelections(resume.id)" class="w-full bg-gray-200 text-gray-800 px-4 py-2 rounded-md hover:bg-gray-300 text-sm">✏️ Edit Selections</button>
+                                    <button @click="confirmDelete(resume.id, 'resume')" class="w-full bg-red-500 text-white px-4 py-2 rounded-md hover:bg-red-600 text-sm">🗑️ Delete</button>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Scraped JDs Hub -->
+            <div x-show="mainView === 'scrapedJDs'" class="fade-in bg-white rounded-lg shadow-lg p-6">
+                 <h2 class="text-2xl font-semibold mb-4">Scraped Job Descriptions</h2>
+                 <p class="text-gray-600 mb-6 text-sm">Use the browser extension on a job posting page to send jobs here.</p>
+                 <div x-show="scrapedJDs.length === 0" class="text-center p-8"><p class="text-gray-500">No job descriptions have been scraped yet.</p></div>
+                 <div x-show="scrapedJDs.length > 0" class="space-y-4">
+                    <template x-for="jd in scrapedJDs" :key="jd.id">
+                         <div class="border rounded-lg p-4 flex justify-between items-center hover:bg-gray-50">
+                            <div>
+                                <h3 class="font-bold text-lg text-blue-600" x-text="jd.job_title"></h3>
+                                <p class="text-md text-gray-700 font-semibold" x-text="jd.company_name"></p>
+                                <p class="text-xs text-gray-500 mt-1">
+                                    Scraped: <span x-text="new Date(jd.created_date).toLocaleString()"></span> | 
+                                    <a :href="jd.page_url" target="_blank" class="text-blue-500 hover:underline">Source</a>
+                                </p>
+                            </div>
+                            <div class="flex space-x-2 flex-shrink-0 ml-4">
+                                <button @click="useScrapedJD(jd)" class="bg-green-500 text-white px-4 py-2 rounded-md hover:bg-green-600 text-sm font-semibold">Customize</button>
+                                <button @click="confirmDelete(jd.id, 'scraped_jd')" class="bg-red-500 text-white px-3 py-2 rounded-md hover:bg-red-600 text-sm">🗑️</button>
+                            </div>
+                         </div>
+                    </template>
+                 </div>
+            </div>
+
+             <!-- AI Results Hub -->
+            <div x-show="mainView === 'resultsHub'" class="fade-in bg-white rounded-lg shadow-lg p-6">
+                 <h2 class="text-2xl font-semibold mb-4">AI Results Hub</h2>
+                 <div x-show="completedJobs.length === 0 && activeJobs.length === 0" class="text-center p-8"><p class="text-gray-500">No AI jobs run yet. Customize a resume to see results here.</p></div>
+                 <div x-show="completedJobs.length > 0 || activeJobs.length > 0" class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Company</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Created</th>
+                                <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            <!-- Active Jobs -->
+                            <template x-for="job in activeJobs" :key="job.id">
+                                 <tr class="bg-blue-50">
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900" x-text="job.company_name"></td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm">
+                                        <div class="flex items-center space-x-2 text-gray-500">
+                                            <div class="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-blue-500"></div>
+                                            <span>Processing...</span>
+                                        </div>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="new Date().toLocaleDateString()"></td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium"></td>
+                                 </tr>
+                            </template>
+                            <!-- Completed Jobs -->
+                            <template x-for="job in completedJobs" :key="job.id">
+                                <tr class="hover:bg-gray-50">
+                                    <td @click="viewResults(job.id)" class="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600 hover:text-blue-800 cursor-pointer" x-text="job.company_name"></td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-green-600 font-semibold">Ready to View</td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="new Date(job.timestamp).toLocaleDateString()"></td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                        <button @click="deleteResult(job.id)" class="text-red-600 hover:text-red-900">Discard</button>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                 </div>
+            </div>
+
+            <!-- Applications Dashboard -->
+            <div x-show="mainView === 'applications'" class="fade-in bg-white rounded-lg shadow-lg p-6">
+                 <h2 class="text-2xl font-semibold mb-4">My Applications</h2>
+                 <div x-show="applications.length === 0" class="text-center p-8"><p class="text-gray-500">No applications saved yet.</p></div>
+                 <div x-show="applications.length > 0" class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Company</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Match</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date Saved</th>
+                                <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            <template x-for="app in applications" :key="app.id">
+                                <tr class="hover:bg-gray-50">
+                                    <td @click="viewApplicationDetails(app.id)" class="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600 hover:text-blue-800 cursor-pointer" x-text="app.company_name"></td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="app.match_score ? app.match_score + '%' : 'N/A'"></td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm">
+                                        <select @change="updateApplication(app.id, { status: $event.target.value })" :value="app.status" class="rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50 text-xs">
+                                            <option value="not_applied">Not Applied</option>
+                                            <option value="applied">Applied</option>
+                                            <option value="interview">Interview</option>
+                                            <option value="offer">Offer</option>
+                                            <option value="rejected">Rejected</option>
+                                        </select>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="new Date(app.created_date).toLocaleDateString()"></td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                        <button @click="confirmDelete(app.id, 'application')" class="text-red-600 hover:text-red-900">Delete</button>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                 </div>
+            </div>
+        </div>
+
+        <!-- FULL PAGE RESULTS VIEW -->
+        <div x-show="view === 'results'" class="fade-in">
+             <div class="bg-white rounded-lg shadow-lg p-6">
+                <!-- Header -->
+                <div class="border-b pb-4 mb-6">
+                    <h2 class="text-3xl font-bold mb-1">AI Customization Results</h2>
+                    <p class="text-gray-600">Review and finalize the results for your application to <strong x-text="activeResult.company_name"></strong>.</p>
+                </div>
+                <!-- Two-Column Layout -->
+                <div class="grid md:grid-cols-2 gap-8">
+                    <!-- Left Column: Paragraphs -->
+                    <div class="flex flex-col">
+                        <h3 class="text-xl font-semibold mb-4">Enhanced Paragraphs</h3>
+                        <div class="space-y-4 flex-grow overflow-y-auto pr-4 border rounded-lg p-4 bg-gray-50 min-h-[50vh]">
+                             <template x-for="(enhanced, original) in activeResult.customized_paragraphs" :key="original">
+                                <div class="border-b pb-4">
+                                   <div class="flex justify-between items-start">
+                                        <div>
+                                           <p class="text-xs text-gray-500 mb-1">Original:</p>
+                                           <p class="text-sm text-gray-600 italic mb-2" x-text="original"></p>
+                                           <p class="text-xs text-green-600 mb-1">Enhanced:</p>
+                                           <p class="text-sm text-gray-800" x-text="enhanced"></p>
+                                        </div>
+                                        <button @click="runCustomization({ result_id: activeResult.id, regenerate: { 'single_paragraph': original } })" title="Regenerate this paragraph" class="ml-4 p-1 text-gray-500 hover:text-blue-600 flex-shrink-0">
+                                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 110 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" /></svg>
+                                        </button>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                    <!-- Right Column: Cover Letter & Score -->
+                    <div class="flex flex-col">
+                        <div class="flex justify-between items-center mb-4">
+                             <h3 class="text-xl font-semibold">Generated Cover Letter</h3>
+                             <button @click="copyToClipboard(activeResult.cover_letter)" title="Copy to clipboard" class="p-1 text-gray-400 hover:text-gray-700">
+                                <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                  <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
+                                </svg>
+                             </button>
+                        </div>
+                        <div class="border rounded-lg p-4 bg-gray-50 flex-grow overflow-y-auto min-h-[50vh]">
+                            <p class="text-sm text-gray-700 whitespace-pre-wrap" x-text="activeResult.cover_letter"></p>
+                        </div>
+                        <div class="mt-6" x-show="activeResult.match_score">
+                            <h3 class="text-lg font-medium mb-3">🎯 Job Match Analysis</h3>
+                            <div class="bg-gray-50 rounded-lg p-4 flex items-center space-x-4 border">
+                                <div class="text-4xl font-bold" :class="activeResult.match_score >= 80 ? 'text-green-500' : 'text-yellow-500'" x-text="activeResult.match_score + '%'"></div>
+                                <div class="w-full bg-gray-200 rounded-full h-4">
+                                    <div class="h-4 rounded-full" :class="activeResult.match_score >= 80 ? 'bg-green-500' : 'bg-yellow-500'" :style="`width: ${activeResult.match_score}%`"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- Regeneration Actions -->
+                <div class="flex space-x-4 my-6">
+                    <button @click="runCustomization({ result_id: activeResult.id, regenerate: 'paragraphs' })" class="text-sm bg-gray-200 text-gray-800 px-4 py-2 rounded-md hover:bg-gray-300">🔄 Regenerate All Paragraphs</button>
+                    <button @click="runCustomization({ result_id: activeResult.id, regenerate: 'cover_letter' })" class="text-sm bg-gray-200 text-gray-800 px-4 py-2 rounded-md hover:bg-gray-300">🔄 Regenerate Cover Letter</button>
+                </div>
+
+                <!-- Actions Footer -->
+                <div class="mt-8 pt-6 border-t flex flex-wrap gap-4 justify-between items-center">
+                    <button @click="navigateTo('resultsHub')" class="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600">Back to Results Hub</button>
+                    <div class="flex space-x-4">
+                         <button @click="downloadCustomizedResume(activeResult)" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 font-semibold">📄 Download Resume</button>
+                         <button @click="saveCurrentApplication()" class="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 font-semibold">💾 Save to My Applications</button>
+                    </div>
+                </div>
+             </div>
+        </div>
+
+        <!-- FULL PAGE APPLICATION DETAIL VIEW -->
+        <div x-show="view === 'applicationDetail'" class="fade-in">
+             <div class="bg-white rounded-lg shadow-lg p-6">
+                <!-- Header -->
+                <div class="border-b pb-4 mb-6 flex justify-between items-center">
+                    <div>
+                        <h2 class="text-3xl font-bold mb-1" x-text="activeApplication.company_name"></h2>
+                        <p class="text-gray-600">Reviewing saved application. Resume used: <strong x-text="activeApplication.resume_name"></strong></p>
+                    </div>
+                    <button @click="navigateTo('applications')" class="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600">Back to Applications</button>
+                </div>
+                <!-- Two-Column Layout -->
+                <div class="grid md:grid-cols-2 gap-8">
+                    <!-- Left Column: Job Description -->
+                    <div class="flex flex-col">
+                        <h3 class="text-xl font-semibold mb-4">Job Description</h3>
+                        <div class="space-y-4 flex-grow overflow-y-auto pr-4 border rounded-lg p-4 bg-gray-50 min-h-[50vh]">
+                            <p class="whitespace-pre-wrap" x-text="activeApplication.job_description"></p>
+                        </div>
+                    </div>
+                    <!-- Right Column: Cover Letter & Score -->
+                    <div class="flex flex-col">
+                        <div class="flex justify-between items-center mb-4">
+                             <h3 class="text-xl font-semibold">Saved Cover Letter</h3>
+                              <button @click="copyToClipboard(activeApplication.cover_letter)" title="Copy to clipboard" class="p-1 text-gray-400 hover:text-gray-700">
+                                <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                  <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
+                                </svg>
+                             </button>
+                        </div>
+                        <div class="border rounded-lg p-4 bg-gray-50 flex-grow overflow-y-auto min-h-[50vh]">
+                            <p class="text-sm text-gray-700 whitespace-pre-wrap" x-text="activeApplication.cover_letter"></p>
+                        </div>
+                        <div class="mt-6" x-show="activeApplication.match_score">
+                            <h3 class="text-lg font-medium mb-3">🎯 Job Match Analysis</h3>
+                            <div class="bg-gray-50 rounded-lg p-4 flex items-center space-x-4 border">
+                                <div class="text-4xl font-bold" :class="activeApplication.match_score >= 80 ? 'text-green-500' : 'text-yellow-500'" x-text="activeApplication.match_score + '%'"></div>
+                                <div class="w-full bg-gray-200 rounded-full h-4">
+                                    <div class="h-4 rounded-full" :class="activeApplication.match_score >= 80 ? 'bg-green-500' : 'bg-yellow-500'" :style="`width: ${activeApplication.match_score}%`"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                 <!-- Placeholder for future features -->
+                 <div class="mt-8 pt-6 border-t">
+                    <h3 class="text-xl font-semibold mb-4">Interview Preparation</h3>
+                     <div class="bg-gray-100 p-6 rounded-lg text-center">
+                        <p class="text-gray-500">Interview question generation will be available here soon.</p>
+                    </div>
+                </div>
+
+                <!-- Actions Footer -->
+                <div class="mt-8 pt-6 border-t flex flex-wrap gap-4 justify-end items-center">
+                    <button @click="downloadCustomizedResume(activeApplication)" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 font-semibold">📄 Download Saved Resume</button>
+                </div>
+             </div>
+        </div>
+
+
+        <!-- Step 0: Name Entry Modal -->
+        <div x-show="view === 'nameEntry'" class="fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center z-40 fade-in">
+            <div class="bg-white rounded-lg shadow-xl p-8 max-w-md w-full">
+                <h2 class="text-2xl font-semibold mb-4">Welcome to Resume AI</h2>
+                <p class="text-gray-600 mb-6">Let's start with your name to personalize your resume files.</p>
+                <div class="space-y-4">
+                    <input type="text" x-model="userFirstName" placeholder="First Name" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500">
+                    <input type="text" x-model="userLastName" placeholder="Last Name" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500">
+                </div>
+                <div class="mt-8 flex justify-end">
+                    <button @click="saveUserInfoAndProceed()" :disabled="!userFirstName.trim() || !userLastName.trim()" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50">Save and Continue</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 2: Paragraph Selection -->
+        <div x-show="view === 'paragraphSelection'" class="fade-in">
+            <div class="bg-white rounded-lg shadow-lg p-6 max-w-4xl mx-auto">
+                <h2 class="text-2xl font-semibold mb-1">Select Content to Customize</h2>
+                <p class="text-gray-600 mb-6 border-b pb-4">Editing: <strong x-text="activeResume.resume_name"></strong></p>
+                <div class="space-y-3 max-h-[60vh] overflow-y-auto pr-4">
+                    <template x-for="p in paragraphs" :key="p.id">
+                        <label class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50" :class="selectedParagraphIds.includes(p.id) ? 'border-blue-500 bg-blue-50' : 'border-gray-200'">
+                            <input type="checkbox" :value="p.id" x-model="selectedParagraphIds" class="mr-4 mt-1 h-5 w-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500 flex-shrink-0">
+                            <p class="text-sm text-gray-800" x-text="p.text"></p>
+                        </label>
+                    </template>
+                </div>
+                <div class="mt-6 flex justify-between items-center">
+                    <button @click="navigateTo('dashboard')" class="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600">Back to Dashboard</button>
+                    <button @click="saveSelections()" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700">Save Selections (<span x-text="selectedParagraphIds.length"></span>)</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 3: Customization View -->
+        <div x-show="view === 'customization'" class="fade-in">
+            <div class="bg-white rounded-lg shadow-lg p-8 max-w-3xl mx-auto">
+                <h2 class="text-2xl font-semibold mb-2">Customize Resume</h2>
+                <p class="text-gray-600 mb-6">Using resume: <strong x-text="activeResume.resume_name"></strong></p>
+                <div class="space-y-6">
+                    <input type="text" x-model="companyName" placeholder="Company Name" class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500">
+                    <textarea x-model="jobDescription" rows="8" placeholder="Paste the full job description here..." class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500"></textarea>
+                    <select x-model="aiModel" class="block w-full px-3 py-2 border border-gray-300 bg-white rounded-md shadow-sm focus:outline-none focus:ring-blue-500">
+                        <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fast & Cost-Effective)</option>
+                        <option value="gemini-2.5-pro">Gemini 2.5 Pro (Most Powerful)</option>
+                    </select>
+                </div>
+                <div class="mt-8 flex justify-between">
+                    <button @click="navigateTo('dashboard')" class="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600">Back</button>
+                    <button @click="runCustomization()" :disabled="!companyName.trim() || !jobDescription.trim()" class="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50 font-semibold">✨ Customize with AI</button>
+                </div>
+            </div>
+        </div>
+        
+    </div>
+
+    <script>
+        function resumeApp() {
+            return {
+                // State
+                view: 'dashboard', 
+                mainView: 'dashboard', 
+                isLoading: false,
+                toasts: [],
+                isDragging: false,
+                showDeleteModal: false,
+                itemToDelete: { id: null, type: '' },
+                deleteContext: '',
+                socket: null,
+                userSessionId: null,
+                showResumeSelectionModal: false, // For new modal
+                jdToUse: null, // For new modal
+                
+                // Job & Result Management
+                activeJobs: [], 
+                completedJobs: [],
+                activeResult: {},
+                scrapedJDs: [],
+
+                // User & Data
+                userFirstName: '',
+                userLastName: '',
+                resumes: [],
+                applications: [],
+                activeApplication: {},
+                newResumeName: '',
+                fileToUpload: null,
+                activeResume: {},
+                paragraphs: [],
+                selectedParagraphIds: [],
+                companyName: '',
+                jobDescription: '',
+                aiModel: 'gemini-2.5-flash',
+                scrapedJdIdToCredit: null,
+                
+                // --- INITIALIZATION ---
+                init() { this.checkStatus(); this.loadUserInfoFromLocalStorage(); this.initSocketIO(); },
+                async checkStatus() {
+                    this.isLoading = true;
+                    try {
+                        const response = await fetch('/api/status');
+                        const data = await response.json();
+                        this.userSessionId = data.session_id;
+                        if (data.has_set_name) {
+                            this.navigateTo('dashboard');
+                        } else {
+                            this.view = 'nameEntry';
+                        }
+                    } catch (error) { this.showToast('error', 'Could not connect to server.'); } 
+                    finally { this.isLoading = false; }
+                },
+                loadUserInfoFromLocalStorage() {
+                    this.userFirstName = localStorage.getItem('userFirstName') || '';
+                    this.userLastName = localStorage.getItem('userLastName') || '';
+                    const savedJobs = localStorage.getItem('completedJobs');
+                    if (savedJobs) this.completedJobs = JSON.parse(savedJobs);
+                },
+                initSocketIO() {
+                    this.socket = io();
+                    this.socket.on('connect', () => { console.log('Socket.IO connected!'); });
+                    
+                    this.socket.on('session_id', (data) => {
+                        this.userSessionId = data.id;
+                    });
+
+                    this.socket.on('task_progress', (data) => { this.showToast('info', data.status); });
+                    
+                    this.socket.on('task_success', async (data) => {
+                        const job = this.activeJobs.find(j => j.id === data.job_id);
+                        if (!job) return;
+
+                        const result = data.result;
+                        if (result.original_paragraph) {
+                            const resultIndex = this.completedJobs.findIndex(r => r.id === job.result_id);
+                            if (resultIndex > -1) {
+                                const updatedParagraphs = { ...this.completedJobs[resultIndex].customized_paragraphs };
+                                updatedParagraphs[result.original_paragraph] = result.enhanced_text;
+                                this.completedJobs[resultIndex].customized_paragraphs = updatedParagraphs;
+                                if(this.activeResult.id === job.result_id) this.activeResult.customized_paragraphs = updatedParagraphs;
+                                this.showToast('success', 'Paragraph regenerated!');
+                            }
+                        } else if (result.regenerate) {
+                             const resultIndex = this.completedJobs.findIndex(r => r.id === job.result_id);
+                             if (resultIndex > -1) {
+                                 if(result.regenerate === 'paragraphs') {
+                                     this.completedJobs[resultIndex].customized_paragraphs = result.customized_paragraphs;
+                                     if(this.activeResult.id === job.result_id) this.activeResult.customized_paragraphs = result.customized_paragraphs;
+                                     this.showToast('success', 'Paragraphs regenerated!');
+                                 } else {
+                                     this.completedJobs[resultIndex].cover_letter = result.cover_letter;
+                                     if(this.activeResult.id === job.result_id) this.activeResult.cover_letter = result.cover_letter;
+                                     this.showToast('success', 'Cover letter regenerated!');
+                                 }
+                             }
+                        } else {
+                            const newResult = { id: data.job_id, timestamp: Date.now(), ...job, ...data.result };
+                            this.completedJobs.unshift(newResult);
+                            this.showToast('success', `AI result for ${job.company_name} is ready!`);
+                            if (job.scraped_jd_id) this.deleteScrapedJD(job.scraped_jd_id, false);
+                        }
+                        localStorage.setItem('completedJobs', JSON.stringify(this.completedJobs));
+                        this.activeJobs = this.activeJobs.filter(j => j.id !== data.job_id);
+                    });
+
+                    this.socket.on('task_error', (data) => {
+                        this.showToast('error', `Task failed: ${data.error}`);
+                        this.activeJobs = this.activeJobs.filter(j => j.id !== data.job_id);
+                    });
+
+                    this.socket.on('download_ready', (data) => {
+                        this.showToast('success', 'Download ready!');
+                        window.location.href = data.download_url;
+                    });
+                },
+                async navigateTo(targetView) {
+                    this.mainView = targetView;
+                    this.view = targetView;
+                    if (targetView === 'dashboard') await this.getResumes();
+                    if (targetView === 'applications') await this.getApplications();
+                    if (targetView === 'scrapedJDs') await this.getScrapedJDs();
+                },
+
+                // --- USER INFO ---
+                async saveUserInfoAndProceed() {
+                    this.isLoading = true;
+                    localStorage.setItem('userFirstName', this.userFirstName);
+                    localStorage.setItem('userLastName', this.userLastName);
+                    try {
+                        await fetch('/save_user_info', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ first_name: this.userFirstName, last_name: this.userLastName })
+                        });
+                        this.showToast('success', 'Information saved!');
+                        await this.checkStatus();
+                    } catch (error) { this.showToast('error', error.message); } 
+                    finally { this.isLoading = false; }
+                },
+                
+                // --- RESUME MANAGEMENT ---
+                async getResumes() { try { const r = await fetch('/api/resumes'); this.resumes = await r.json(); } catch (e) { this.showToast('error', 'Could not fetch resumes.'); } },
+                handleFileSelect(event) { this.fileToUpload = event.target.files[0]; if (this.newResumeName.trim()) this.uploadNewResume(); },
+                handleFileDrop(event) { this.isDragging = false; this.fileToUpload = event.dataTransfer.files[0]; if (this.newResumeName.trim()) this.uploadNewResume(); else this.showToast('error', 'Please provide a resume name first.'); },
+                triggerFileUpload() { if (!this.newResumeName.trim()) { this.showToast('error', 'Please provide a resume name first.'); return; } document.getElementById('resumeFileInput').click(); },
+                async uploadNewResume() {
+                    if (!this.newResumeName.trim() || !this.fileToUpload) return;
+                    this.isLoading = true;
+                    const formData = new FormData();
+                    formData.append('resume_name', this.newResumeName);
+                    formData.append('resume_file', this.fileToUpload);
+                    formData.append('first_name', this.userFirstName);
+                    formData.append('last_name', this.userLastName);
+                    try {
+                        const response = await fetch('/api/resumes', { method: 'POST', body: formData });
+                        const newResume = await response.json();
+                        if (!response.ok) throw new Error(newResume.error || 'Upload failed.');
+                        this.showToast('success', 'Resume uploaded! Now select paragraphs.');
+                        this.newResumeName = ''; this.fileToUpload = null;
+                        await this.getResumes();
+                        await this.editSelections(newResume.id);
+                    } catch (error) { this.showToast('error', error.message); } 
+                    finally { this.isLoading = false; }
+                },
+                confirmDelete(id, type) { this.itemToDelete = { id, type }; this.deleteContext = type; this.showDeleteModal = true; },
+                async deleteItem() {
+                    this.isLoading = true;
+                    this.showDeleteModal = false;
+                    const { id, type } = this.itemToDelete;
+                    let endpoint = (type === 'resume') ? `/api/resumes/${id}` : (type === 'application') ? `/api/applications/${id}` : (type === 'scraped_jd') ? `/api/scraped-jds/${id}` : '';
+                    if (!endpoint) return;
+
+                    try {
+                        const response = await fetch(endpoint, { method: 'DELETE' });
+                        if (!response.ok) throw new Error(`Failed to delete ${type}.`);
+                        this.showToast('success', `${type.replace('_', ' ')} deleted.`);
+                        if (type === 'resume') this.resumes = this.resumes.filter(r => r.id !== id);
+                        if (type === 'application') this.applications = this.applications.filter(a => a.id !== id);
+                        if (type === 'scraped_jd') this.scrapedJDs = this.scrapedJDs.filter(j => j.id !== id);
+                    } catch (error) { this.showToast('error', error.message); } 
+                    finally { this.isLoading = false; }
+                },
+
+                // --- SCRAPED JD MANAGEMENT ---
+                async getScrapedJDs() { try { const r = await fetch('/api/scraped-jds'); this.scrapedJDs = await r.json(); } catch (e) { this.showToast('error', 'Could not fetch scraped JDs.'); } },
+                async deleteScrapedJD(jdId, showToast = true) {
+                     try {
+                        await fetch(`/api/scraped-jds/${jdId}`, { method: 'DELETE' });
+                        if (showToast) this.showToast('success', `Scraped JD deleted.`);
+                        this.scrapedJDs = this.scrapedJDs.filter(j => j.id !== jdId);
+                    } catch (error) { if (showToast) this.showToast('error', 'Failed to delete scraped JD'); }
+                },
+                useScrapedJD(jd) {
+                    if (this.resumes.length === 0) { this.showToast('error', 'You must upload at least one resume first.'); return; }
+                    if (this.resumes.length === 1) {
+                        this.startCustomizationWithSelectedResume(this.resumes[0], jd);
+                    } else {
+                        this.jdToUse = jd;
+                        this.showResumeSelectionModal = true;
+                    }
+                },
+                startCustomizationWithSelectedResume(resume, jd = null) {
+                    const jobData = jd || this.jdToUse;
+                    this.showToast('info', `Using resume: ${resume.resume_name}`);
+                    this.activeResume = resume;
+                    this.companyName = jobData.company_name;
+                    this.jobDescription = jobData.job_description;
+                    this.scrapedJdIdToCredit = jobData.id;
+                    this.showResumeSelectionModal = false;
+                    this.jdToUse = null;
+                    this.view = 'customization';
+                },
+
+                // --- PARAGRAPH SELECTION ---
+                async editSelections(resumeId) {
+                    this.isLoading = true;
+                    try {
+                        const response = await fetch(`/api/resumes/${resumeId}`);
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.error || 'Could not load resume details.');
+                        this.activeResume = data;
+                        this.paragraphs = data.paragraphs || [];
+                        this.selectedParagraphIds = data.selected_paragraph_ids || [];
+                        this.view = 'paragraphSelection';
+                    } catch (error) { this.showToast('error', error.message); this.view = 'dashboard'; } 
+                    finally { this.isLoading = false; }
+                },
+                async saveSelections() {
+                    this.isLoading = true;
+                    try {
+                        await fetch(`/api/resumes/${this.activeResume.id}/selections`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ selected_paragraph_ids: this.selectedParagraphIds })
+                        });
+                        this.showToast('success', 'Selections saved.');
+                        this.navigateTo('dashboard');
+                    } catch (error) { this.showToast('error', 'Failed to save selections.'); } 
+                    finally { this.isLoading = false; }
+                },
+
+                // --- CUSTOMIZATION & RESULTS ---
+                startCustomization(resume) { this.activeResume = resume; this.companyName = ''; this.jobDescription = ''; this.scrapedJdIdToCredit = null; this.view = 'customization'; },
+                async runCustomization(options = {}) {
+                    this.isLoading = true;
+                    let payload;
+                    try {
+                        if(options.regenerate) {
+                            const result = this.completedJobs.find(r => r.id === options.result_id);
+                            if(!result) throw new Error('Could not find original result for regeneration.');
+                             payload = { resume_id: result.resume_id, company_name: result.company_name, job_description: result.job_description, ai_model: this.aiModel, regenerate: options.regenerate, result_id: options.result_id };
+                        } else {
+                            payload = { resume_id: this.activeResume.id, company_name: this.companyName, job_description: this.jobDescription, ai_model: this.aiModel, scraped_jd_id: this.scrapedJdIdToCredit };
+                        }
+                        const response = await fetch('/customize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.error || 'AI customization failed.');
+                        
+                        this.activeJobs.unshift({ id: data.job_id, ...payload });
+                        this.showToast('info', `Started AI job for ${payload.company_name}...`);
+                        if(!options.regenerate) this.navigateTo('resultsHub');
+                        this.scrapedJdIdToCredit = null;
+
+                    } catch (error) { this.showToast('error', error.message); } 
+                    finally { this.isLoading = false; }
+                },
+                viewResults(jobId) {
+                    const result = this.completedJobs.find(j => j.id === jobId);
+                    if (result) { this.activeResult = { ...result }; this.view = 'results'; }
+                },
+                 deleteResult(jobId) {
+                    this.completedJobs = this.completedJobs.filter(j => j.id !== jobId);
+                    localStorage.setItem('completedJobs', JSON.stringify(this.completedJobs));
+                    this.showToast('success', 'Result discarded.');
+                },
+                async saveCurrentApplication() {
+                    this.isLoading = true;
+                    try {
+                        const payload = { resume_id: this.activeResult.resume_id, company_name: this.activeResult.company_name, job_description: this.activeResult.job_description, cover_letter: this.activeResult.cover_letter, match_score: this.activeResult.match_score, customized_paragraphs: this.activeResult.customized_paragraphs };
+                        const response = await fetch('/api/applications', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+                        if (!response.ok) throw new Error('Failed to save application.');
+                        this.showToast('success', 'Application saved!');
+                        this.deleteResult(this.activeResult.id);
+                        this.navigateTo('applications');
+                    } catch (error) { this.showToast('error', error.message); } 
+                    finally { this.isLoading = false; }
+                },
+                async downloadCustomizedResume(source) {
+                    this.showToast('info', 'Your download is being prepared...');
+                    try {
+                        const payload = { resume_id: source.resume_id, customizations: { customized_paragraphs: source.customized_paragraphs }, company_name: source.company_name };
+                        await fetch('/api/download_resume', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+                    } catch (error) { this.showToast('error', 'Failed to queue download.'); }
+                },
+                
+                // --- APPLICATION MANAGEMENT ---
+                async getApplications() { try { const r = await fetch('/api/applications'); this.applications = await r.json(); } catch (e) { this.showToast('error', 'Could not fetch applications.'); } },
+                 async viewApplicationDetails(appId) {
+                    this.isLoading = true;
+                    try {
+                        const response = await fetch(`/api/applications/${appId}`);
+                        const data = await response.json();
+                        if (!response.ok) throw new Error('Could not fetch application details.');
+                        const resume = this.resumes.find(r => r.id === data.resume_id);
+                        data.resume_name = resume ? resume.resume_name : 'Unknown';
+                        this.activeApplication = data;
+                        this.view = 'applicationDetail';
+                    } catch (error) { this.showToast('error', error.message); } 
+                    finally { this.isLoading = false; }
+                },
+                async updateApplication(appId, payload) {
+                    try {
+                        await fetch(`/api/applications/${appId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                        this.showToast('success', 'Application updated.');
+                    } catch (error) { this.showToast('error', 'Could not update application.'); }
+                },
+
+                // --- UTILITIES ---
+                showToast(type, message, duration = 5000) {
+                    const id = Date.now();
+                    this.toasts.push({ id, type, message });
+                    setTimeout(() => { this.toasts = this.toasts.filter(t => t.id !== id); }, duration);
+                },
+                copyToClipboard(text) {
+                    if (!text) return;
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.style.position = 'fixed'; ta.style.opacity = 0;
+                    document.body.appendChild(ta);
+                    ta.select();
+                    try { document.execCommand('copy'); this.showToast('success', 'Copied to clipboard!'); } 
+                    catch (err) { this.showToast('error', 'Failed to copy.'); }
+                    document.body.removeChild(ta);
+                }
+            }
+        }
+    </script>
+</body>
+</html>
+

@@ -303,12 +303,22 @@ def upload_resume():
         filename = secure_filename(file.filename)
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{uuid.uuid4()}_{filename}")
         file.save(file_path)
+
+        # ADDED: Extract text content immediately and cache it in the database.
+        try:
+            cached_structured_text = processor.extract_text_from_docx(file_path)
+        except Exception as e:
+            print(f"Error extracting text from {filename} on upload: {e}")
+            cached_structured_text = None
+
         new_resume = Resume(
             resume_name=request.form.get('resume_name'),
             original_file_path=file_path,
             user_session_id=session.get('user_session_id'),
             user_first_name=request.form.get('first_name'),
-            user_last_name=request.form.get('last_name')
+            user_last_name=request.form.get('last_name'),
+            # ADDED: Set the new field
+            structured_text=cached_structured_text
         )
         db.session.add(new_resume)
         db.session.commit()

@@ -30,7 +30,14 @@ def generate_customization_task(self, data):
         if not resume:
             raise Exception("Resume not found.")
         
-        resume_content = processor.extract_text_from_docx(resume.original_file_path)
+        # Check for cached text first. If not present, extract it as a fallback.
+        if resume.structured_text:
+            emit_progress("Using cached resume content...")
+            resume_content = resume.structured_text
+        else:
+            # This is a fallback for resumes uploaded before the caching feature was added.
+            emit_progress("No cache found. Parsing DOCX file...")
+            resume_content = processor.extract_text_from_docx(resume.original_file_path)
         selected_ids_as_int = {int(id_val) for id_val in resume.selected_paragraph_ids or [] if str(id_val).isdigit()}
         
         # --- AI Generation with Fallback ---
