@@ -53,8 +53,8 @@ ResumeAI is an AI-powered resume builder and analyzer that leverages large langu
 
 ---
 
-## AI Prompt Instructions
-**DEPRECATED: ** Custom prompts can now be added from the UI by clicking cog icon.
+## DEPRECATED: AI Prompt Instructions
+### Custom prompts can now be added from the UI by clicking cog icon.
 
 ResumeAI's AI prompt logic is in the `ResumeProcessor` class in `app.py`.  
 Future version will have this within the UI, if you are still keen to change it atm then edit the following methods to change how the AI customizes resumes and cover letters:
