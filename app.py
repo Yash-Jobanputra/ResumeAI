@@ -11,7 +11,7 @@ import traceback
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, session, send_file, abort
 from flask_socketio import SocketIO, join_room
-from flask_cors import CORS 
+from flask_cors import CORS
 from werkzeug.utils import secure_filename
 import google.generativeai as genai
 from docx import Document
@@ -40,7 +40,7 @@ def make_celery(app):
     return celery
 
 app = Flask(__name__)
-CORS(app) 
+CORS(app)
 
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your-secret-key-here')
 app.config['UPLOAD_FOLDER'] = 'uploads'
@@ -87,18 +87,19 @@ class ResumeProcessor:
         except Exception as e:
             raise Exception(f"Error processing DOCX file: {str(e)}")
 
-    def _call_gemini_api(self, model, prompt):
+    def _call_gemini_api(self, model, prompt, request_options=None):
         """Helper function to make the API call and parse JSON."""
+        if request_options is None:
+            request_options = {}
         try:
-            response = model.generate_content(prompt)
-            # Find the JSON object within the response text
+            response = model.generate_content(prompt, request_options=request_options)
+            # Use regex to find the JSON object within the response text, as seen in your Postman test.
             json_match = re.search(r'\{.*\}', response.text, re.DOTALL)
             if not json_match:
                 # Fallback for cases where the model might not wrap in markdown
                 if response.text.strip().startswith('{'):
                      return json.loads(response.text, strict=False)
                 raise Exception("AI response did not contain a valid JSON object.")
-            # FIX: Set strict=False to allow control characters (like newlines) in the string
             return json.loads(json_match.group(), strict=False)
         except Exception as e:
             print(f"Error during Gemini API call or JSON parsing: {e}")
@@ -172,6 +173,57 @@ CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with t
 }
 """)
         return self._call_gemini_api(model, "\n".join(prompt_parts))
+    
+    def _get_interview_prep_prompt_text(self, resume_full_text, job_description, company_name, job_title):
+        """Constructs and returns the full text of the interview prep prompt."""
+        prompt_parts = [
+            "You are an expert career coach and interview preparation specialist. Your task is to generate a comprehensive set of interview questions and exemplary answers based on the candidate's resume and the target job description. Return a single, valid JSON object."
+        ]
+        prompt_parts.append(f"""
+CONTEXT:
+- COMPANY: {company_name}
+- TARGET ROLE: {job_title}
+- TARGET JOB DESCRIPTION:
+{job_description}
+- CANDIDATE'S FULL RESUME TEXT:
+{resume_full_text}
+""")
+        prompt_parts.append("""
+TASK: GENERATE INTERVIEW QUESTIONS & ANSWERS
+Generate two distinct categories of questions. For each question, provide both 'talking_points' (a bulleted list of key ideas to convey) and a complete sample 'answer'.
+
+1.  **General Questions (5 questions):** Tailored to the candidate's specific resume. Scrutinize their career path, skills, and experiences (e.g., job gaps, career changes, specific projects).
+2.  **Role-Based Questions (5 questions):** Highly specific to the technical and functional requirements of the job description, framed in the context of the candidate's resume.
+""")
+        json_structure = """
+{
+  "general_questions": [
+    {
+      "question": "The generated question text.",
+      "talking_points": [
+        "A key talking point.",
+        "Another talking point."
+      ],
+      "answer": "A complete sample answer."
+    }
+  ],
+  "role_based_questions": [
+    {
+      "question": "The generated question text.",
+      "talking_points": [
+        "A key talking point.",
+        "Another talking point."
+      ],
+      "answer": "A complete sample answer."
+    }
+  ]
+}
+"""
+        prompt_parts.append(f"""
+CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure. Do not add any text or markdown before or after the JSON object.
+{json_structure}
+""")
+        return "\n".join(prompt_parts)
 
     def generate_ai_customization(self, api_key, model_name, resume_data, selected_paragraph_ids, job_description, company_name, regenerate_type=None):
         try:
@@ -185,7 +237,6 @@ CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with t
                 'enhanced_text': None
             }
 
-            # Determine which tasks to run based on regeneration request or initial run
             do_paragraphs = regenerate_type is None or regenerate_type == 'paragraphs' or isinstance(regenerate_type, dict)
             do_cover_letter = regenerate_type is None or regenerate_type == 'cover_letter'
 
@@ -210,6 +261,21 @@ CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with t
         except Exception as e:
             print(f"AI Generation Error: {traceback.format_exc()}")
             raise Exception(f"Error generating AI customization: {str(e)}")
+            
+    def generate_interview_prep(self, api_key, model_name, resume_full_text, job_description, company_name, job_title):
+        try:
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel(self.gemini_models[model_name])
+            
+            prompt = self._get_interview_prep_prompt_text(
+                resume_full_text, job_description, company_name, job_title
+            )
+            
+            # MODIFIED: Added a 300-second timeout for this long-running generation task.
+            return self._call_gemini_api(model, prompt, request_options={"timeout": 300})
+        except Exception as e:
+            print(f"Interview Prep Generation Error: {traceback.format_exc()}")
+            raise Exception(f"Error generating interview prep materials: {str(e)}")
 
     def update_docx_with_customizations(self, original_file_path, customizations):
         customized_paragraphs_dict = customizations.get('customized_paragraphs', {})
@@ -304,7 +370,6 @@ def upload_resume():
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{uuid.uuid4()}_{filename}")
         file.save(file_path)
 
-        # ADDED: Extract text content immediately and cache it in the database.
         try:
             cached_structured_text = processor.extract_text_from_docx(file_path)
         except Exception as e:
@@ -317,7 +382,6 @@ def upload_resume():
             user_session_id=session.get('user_session_id'),
             user_first_name=request.form.get('first_name'),
             user_last_name=request.form.get('last_name'),
-            # ADDED: Set the new field
             structured_text=cached_structured_text
         )
         db.session.add(new_resume)
@@ -336,8 +400,11 @@ def get_resume_details(resume_id):
     if resume.user_session_id != session.get('user_session_id'): abort(403)
     details = resume.to_dict()
     try:
-        resume_content = processor.extract_text_from_docx(resume.original_file_path)
-        details['paragraphs'] = resume_content.get('paragraphs', [])
+        if resume.structured_text and 'paragraphs' in resume.structured_text:
+            details['paragraphs'] = resume.structured_text['paragraphs']
+        else:
+            resume_content = processor.extract_text_from_docx(resume.original_file_path)
+            details['paragraphs'] = resume_content.get('paragraphs', [])
     except Exception as e:
         details['paragraphs'] = []
         details['error'] = f"Could not read DOCX file: {e}"
@@ -413,6 +480,54 @@ def delete_application(app_id):
     db.session.commit()
     return jsonify({'message': 'Application deleted'})
 
+@app.route('/api/applications/<int:app_id>/generate-interview-prep', methods=['POST'])
+def generate_interview_prep(app_id):
+    try:
+        app = Application.query.get_or_404(app_id)
+        if app.user_session_id != session.get('user_session_id'):
+            abort(403)
+        
+        data = request.get_json() or {}
+        task_data = {
+            'app_id': app.id,
+            'session_id': session['user_session_id'],
+            'ai_model': data.get('ai_model', 'gemini-2.5-pro') # Default to Pro for better results
+        }
+        
+        task = celery.send_task('celery_worker.generate_interview_prep_task', args=[task_data])
+        return jsonify({'job_id': task.id})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/applications/<int:app_id>/interview-prompt-text', methods=['GET'])
+def get_interview_prompt_text(app_id):
+    try:
+        application = Application.query.get_or_404(app_id)
+        if application.user_session_id != session.get('user_session_id'):
+            abort(403)
+
+        resume = application.resume
+        if not resume or not resume.structured_text or 'full_text' not in resume.structured_text:
+             return jsonify({'error': 'Resume text not found or not cached.'}), 404
+        
+        scraped_jd = ScrapedJD.query.filter_by(
+            user_session_id=session.get('user_session_id'),
+            company_name=application.company_name
+        ).order_by(ScrapedJD.created_date.desc()).first()
+        job_title = scraped_jd.job_title if scraped_jd else f"Role at {application.company_name}"
+        
+        prompt_text = processor._get_interview_prep_prompt_text(
+            resume.structured_text['full_text'],
+            application.job_description,
+            application.company_name,
+            job_title
+        )
+        return jsonify({'prompt_text': prompt_text})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/scraped-jds', methods=['POST'])
 def add_scraped_jd():
     data = request.get_json()
@@ -464,4 +579,3 @@ if __name__ == '__main__':
     with app.app_context():
         db.create_all()
     socketio.run(app, debug=True, host='127.0.0.1', port=5001, use_reloader=False)
-

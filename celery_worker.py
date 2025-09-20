@@ -5,10 +5,8 @@ import os
 import time
 import traceback
 from flask_socketio import SocketIO
-from app import celery, ResumeProcessor, Resume  # Import celery from the app
+from app import celery, ResumeProcessor, Resume, db, Application, ScrapedJD
 
-# This is a bit of a trick to get a SocketIO instance that can emit messages
-# outside of a Flask request context. We configure it to use the same Redis message queue.
 socketio = SocketIO(message_queue=celery.conf.broker_url)
 processor = ResumeProcessor()
 
@@ -18,7 +16,7 @@ def generate_customization_task(self, data):
     
     def emit_progress(status):
         socketio.emit('task_progress', {'status': status}, room=session_id)
-        time.sleep(1) # Small delay to make sure messages are seen
+        time.sleep(1)
 
     try:
         api_key = os.environ.get('GEMINI_API_KEY')
@@ -30,18 +28,16 @@ def generate_customization_task(self, data):
         if not resume:
             raise Exception("Resume not found.")
         
-        # Check for cached text first. If not present, extract it as a fallback.
         if resume.structured_text:
             emit_progress("Using cached resume content...")
             resume_content = resume.structured_text
         else:
-            # This is a fallback for resumes uploaded before the caching feature was added.
             emit_progress("No cache found. Parsing DOCX file...")
             resume_content = processor.extract_text_from_docx(resume.original_file_path)
         selected_ids_as_int = {int(id_val) for id_val in resume.selected_paragraph_ids or [] if str(id_val).isdigit()}
         
-        # --- AI Generation with Fallback ---
         result = None
+        # Consistent model names
         models_to_try = ['gemini-2.5-pro', 'gemini-2.5-flash']
         for model in models_to_try:
             try:
@@ -63,7 +59,6 @@ def generate_customization_task(self, data):
                 if model == models_to_try[-1]: 
                     raise e 
         
-        # For single paragraph regeneration, add original text to the result
         if isinstance(data.get('regenerate'), dict) and 'single_paragraph' in data.get('regenerate'):
             result['original_paragraph'] = data['regenerate']['single_paragraph']
 
@@ -110,3 +105,82 @@ def create_download_file_task(self, data):
         socketio.emit('task_error', {'job_id': self.request.id, 'error': f'Download failed: {error_message}'}, room=session_id)
         return {'error': error_message}
 
+# MODIFIED: Added model fallback logic.
+@celery.task(bind=True)
+def generate_interview_prep_task(self, data):
+    session_id = data.get('session_id')
+    app_id = data.get('app_id')
+    
+    def emit_progress(status):
+        socketio.emit('task_progress', {'status': status, 'context': {'type': 'interview_prep', 'app_id': app_id}}, room=session_id)
+        time.sleep(1)
+
+    try:
+        api_key = os.environ.get('GEMINI_API_KEY')
+        if not api_key:
+            raise Exception("GEMINI_API_KEY not found on worker.")
+        
+        emit_progress("Fetching application and resume...")
+        application = Application.query.get(app_id)
+        if not application:
+            raise Exception("Application not found.")
+        
+        resume = application.resume
+        if not resume or not resume.structured_text or 'full_text' not in resume.structured_text:
+            raise Exception("Cached resume text not found for this application.")
+
+        scraped_jd = ScrapedJD.query.filter_by(
+            user_session_id=session_id,
+            company_name=application.company_name
+        ).order_by(ScrapedJD.created_date.desc()).first()
+        job_title = scraped_jd.job_title if scraped_jd else f"Role at {application.company_name}"
+        
+        emit_progress("Generating interview questions with AI... (this may take over a minute)")
+
+        result = None
+        # Start with the model chosen in the UI, or default to pro, then fall back to flash
+        initial_model = data.get('ai_model', 'gemini-2.5-pro')
+        models_to_try = [initial_model]
+        if initial_model != 'gemini-2.5-flash':
+            models_to_try.append('gemini-2.5-flash')
+        
+        for model in models_to_try:
+            try:
+                emit_progress(f"Attempting generation with {model}...")
+                result = processor.generate_interview_prep(
+                    api_key,
+                    model,
+                    resume.structured_text['full_text'],
+                    application.job_description,
+                    application.company_name,
+                    job_title
+                )
+                emit_progress(f"Successfully generated content with {model}!")
+                break # Exit loop on success
+            except Exception as e:
+                print(f"Model {model} failed: {e}")
+                emit_progress(f"Model {model} failed. Trying next model...")
+                if model == models_to_try[-1]: # If this was the last model to try
+                    raise e # Re-raise the last exception
+
+        emit_progress("Saving results to database...")
+        application.interview_prep = result
+        db.session.commit()
+        
+        socketio.emit('interview_prep_ready', {
+            'job_id': self.request.id, 
+            'app_id': app_id, 
+            'interview_prep': result
+        }, room=session_id)
+        
+        return {'app_id': app_id, 'status': 'success'}
+
+    except Exception as e:
+        traceback.print_exc()
+        error_message = str(e)
+        socketio.emit('task_error', {
+            'job_id': self.request.id, 
+            'error': error_message,
+            'context': {'type': 'interview_prep', 'app_id': app_id}
+        }, room=session_id)
+        return {'error': error_message}

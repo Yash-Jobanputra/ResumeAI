@@ -37,6 +37,7 @@ class Application(db.Model):
     match_score = db.Column(db.Integer)
     cover_letter = db.Column(db.Text)
     customized_paragraphs = db.Column(db.JSON)
+    interview_prep = db.Column(db.JSON)
     created_date = db.Column(db.DateTime, default=datetime.utcnow)
     updated_date = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     user_session_id = db.Column(db.String(100), nullable=False)
@@ -51,6 +52,7 @@ class Application(db.Model):
             'match_score': self.match_score,
             'cover_letter': self.cover_letter,
             'customized_paragraphs': self.customized_paragraphs,
+            'interview_prep': self.interview_prep,
             'created_date': self.created_date.isoformat(),
             'updated_date': self.updated_date.isoformat(),
             'user_session_id': self.user_session_id,
