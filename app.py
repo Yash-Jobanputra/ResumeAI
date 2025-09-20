@@ -464,6 +464,7 @@ def save_application():
         match_score=data.get('match_score'),
         cover_letter=data.get('cover_letter'),
         customized_paragraphs=data.get('customized_paragraphs'),
+        job_posting_url=data.get('job_posting_url'),  # Add job posting URL
         user_session_id=session.get('user_session_id'),
         resume_id=resume.id
     )

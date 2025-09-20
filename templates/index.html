@@ -187,12 +187,11 @@
                             <div class="flex space-x-2 flex-shrink-0 ml-4">
                                 <button
                                     @click="useScrapedJD(jd)"
-                                    :class="jd.status === 'generated' ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-500 hover:bg-green-600'"
+                                    :class="jd.status === 'generated' ? 'bg-blue-500 hover:bg-blue-600' : 'bg-green-500 hover:bg-green-600'"
                                     class="text-white px-4 py-2 rounded-md text-sm font-semibold"
-                                    :disabled="jd.status === 'generated'"
                                 >
-                                    <span x-show="jd.status === 'generated'">Used</span>
-                                    <span x-show="jd.status !== 'generated'">Customize</span>
+                                    <span x-show="jd.status === 'generated'">🔄 Re-generate</span>
+                                    <span x-show="jd.status !== 'generated'">✨ Customize</span>
                                 </button>
                                 <button @click="confirmDelete(jd.id, 'scraped_jd')" class="bg-red-500 text-white px-3 py-2 rounded-md hover:bg-red-600 text-sm">🗑️</button>
                             </div>
@@ -253,6 +252,7 @@
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Company</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Match</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Job Link</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date Saved</th>
                                 <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
                             </tr>
@@ -270,6 +270,17 @@
                                             <option value="offer">Offer</option>
                                             <option value="rejected">Rejected</option>
                                         </select>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm">
+                                        <div x-show="app.job_posting_url" class="flex items-center space-x-2">
+                                            <a :href="app.job_posting_url" target="_blank" class="text-blue-500 hover:text-blue-700 flex items-center">
+                                                <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                                                </svg>
+                                                <span class="text-xs">Original Job</span>
+                                            </a>
+                                        </div>
+                                        <span x-show="!app.job_posting_url" class="text-gray-400 text-xs">Manual entry</span>
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="new Date(app.created_date).toLocaleDateString()"></td>
                                     <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
@@ -994,13 +1005,41 @@ Generate two distinct categories of questions. For each question, provide both '
                 async saveCurrentApplication() {
                     this.isLoading = true;
                     try {
-                        const payload = { resume_id: this.activeResult.resume_id, company_name: this.activeResult.company_name, job_description: this.activeResult.job_description, cover_letter: this.activeResult.cover_letter, match_score: this.activeResult.match_score, customized_paragraphs: this.activeResult.customized_paragraphs };
+                        const payload = {
+                            resume_id: this.activeResult.resume_id,
+                            company_name: this.activeResult.company_name,
+                            job_description: this.activeResult.job_description,
+                            cover_letter: this.activeResult.cover_letter,
+                            match_score: this.activeResult.match_score,
+                            customized_paragraphs: this.activeResult.customized_paragraphs
+                        };
+
+                        // Add job posting URL if this came from a scraped job
+                        if (this.activeResult.scraped_jd_id) {
+                            console.log('DEBUG: Saving application with scraped_jd_id:', this.activeResult.scraped_jd_id);
+                            console.log('DEBUG: Available scraped JDs:', this.scrapedJDs.map(jd => ({ id: jd.id, url: jd.page_url })));
+
+                            const scrapedJob = this.scrapedJDs.find(jd => jd.id === this.activeResult.scraped_jd_id);
+                            console.log('DEBUG: Found scraped job:', scrapedJob);
+
+                            if (scrapedJob && scrapedJob.page_url) {
+                                payload.job_posting_url = scrapedJob.page_url;
+                                console.log('DEBUG: Adding job posting URL:', scrapedJob.page_url);
+                            } else {
+                                console.log('DEBUG: No URL found for scraped job');
+                            }
+                        } else {
+                            console.log('DEBUG: No scraped_jd_id found in activeResult');
+                        }
+
+                        console.log('DEBUG: Final payload:', payload);
+
                         const response = await fetch('/api/applications', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
                         if (!response.ok) throw new Error('Failed to save application.');
                         this.showToast('success', 'Application saved!');
                         this.deleteResult(this.activeResult.id);
                         this.navigateTo('applications');
-                    } catch (error) { this.showToast('error', error.message); } 
+                    } catch (error) { this.showToast('error', error.message); }
                     finally { this.isLoading = false; }
                 },
                 async downloadCustomizedResume(source) {

@@ -42,6 +42,7 @@ class Application(db.Model):
     updated_date = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     user_session_id = db.Column(db.String(100), nullable=False)
     resume_id = db.Column(db.Integer, db.ForeignKey('resume.id'), nullable=False)
+    job_posting_url = db.Column(db.String(500), nullable=True)  # URL to original job posting
 
     def to_dict(self):
         return {
@@ -57,7 +58,8 @@ class Application(db.Model):
             'updated_date': self.updated_date.isoformat(),
             'user_session_id': self.user_session_id,
             'resume_id': self.resume_id,
-            'resume_name': self.resume.resume_name if self.resume else 'N/A'
+            'resume_name': self.resume.resume_name if self.resume else 'N/A',
+            'job_posting_url': self.job_posting_url
         }
 
 # New Model for scraped job descriptions from the extension
