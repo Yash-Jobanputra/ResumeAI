@@ -1,6 +1,7 @@
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from datetime import datetime
+from sqlalchemy.orm import joinedload, selectinload
 
 db = SQLAlchemy()
 migrate = Migrate()
@@ -15,6 +16,7 @@ class Resume(db.Model):
     user_first_name = db.Column(db.String(100))
     user_last_name = db.Column(db.String(100))
     structured_text = db.Column(db.JSON)
+    file_hash = db.Column(db.String(64))  # SHA-256 hash of file for cache invalidation
     applications = db.relationship('Application', backref='resume', lazy=True, cascade="all, delete-orphan")
 
     def to_dict(self):
@@ -63,6 +65,17 @@ class Application(db.Model):
             'resume_name': self.resume.resume_name if self.resume else 'N/A',
             'job_posting_url': self.job_posting_url
         }
+
+    @classmethod
+    def get_with_resume(cls, session_id):
+        """Optimized query to get applications with resume data in one query"""
+        return cls.query.options(
+            joinedload(cls.resume)
+        ).filter_by(
+            user_session_id=session_id
+        ).order_by(
+            cls.created_date.desc()
+        ).all()
 
 # New Model for scraped job descriptions from the extension
 class ScrapedJD(db.Model):

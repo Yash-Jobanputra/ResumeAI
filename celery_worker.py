@@ -4,10 +4,12 @@ eventlet.monkey_patch()
 import os
 import time
 import traceback
+import redis
 from flask_socketio import SocketIO
 from app import celery, ResumeProcessor, Resume, db, Application, ScrapedJD
 
-socketio = SocketIO(message_queue=celery.conf.broker_url)
+# Initialize SocketIO with Redis message queue for cross-process communication
+socketio = SocketIO(message_queue='redis://localhost:6379/0')
 processor = ResumeProcessor()
 
 @celery.task(bind=True)
@@ -19,15 +21,33 @@ def generate_customization_task(self, data):
         time.sleep(1)
 
     try:
-        api_key = os.environ.get('GEMINI_API_KEY')
-        if not api_key:
-            raise Exception("GEMINI_API_KEY not found on worker.")
+        # Load multiple API keys from environment
+        api_keys = []
+        combined_keys = os.environ.get('GEMINI_API_KEYS', '')
+        if combined_keys:
+            api_keys = [key.strip() for key in combined_keys.split(',') if key.strip()]
+
+        if not api_keys:
+            for i in range(1, 11):  # Support up to 10 individual keys
+                key = os.environ.get(f'GEMINI_API_KEY_{i}')
+                if key:
+                    api_keys.append(key)
+                else:
+                    break
+
+        if not api_keys:
+            single_key = os.environ.get('GEMINI_API_KEY')
+            if single_key:
+                api_keys = [single_key]
+
+        if not api_keys:
+            raise Exception("No GEMINI_API_KEY found on worker.")
 
         emit_progress("Fetching resume details...")
         resume = Resume.query.get(data.get('resume_id'))
         if not resume:
             raise Exception("Resume not found.")
-        
+
         if resume.structured_text:
             emit_progress("Using cached resume content...")
             resume_content = resume.structured_text
@@ -35,34 +55,43 @@ def generate_customization_task(self, data):
             emit_progress("No cache found. Parsing DOCX file...")
             resume_content = processor.extract_text_from_docx(resume.original_file_path)
         selected_ids_as_int = {int(id_val) for id_val in resume.selected_paragraph_ids or [] if str(id_val).isdigit()}
-        
+
         result = None
-        # MODIFIED: Implement robust model fallback logic based on user's selection
+        # MODIFIED: Implement robust model fallback logic with multiple API keys
         initial_model = data.get('ai_model', 'gemini-2.5-pro')
         models_to_try = [initial_model]
         if initial_model != 'gemini-2.5-flash':
             models_to_try.append('gemini-2.5-flash')
 
+        # Try each model with all available API keys
         for model in models_to_try:
-            try:
-                emit_progress(f"Attempting generation with {model}...")
-                result = processor.generate_ai_customization(
-                    api_key,
-                    model,
-                    resume_content,
-                    selected_ids_as_int,
-                    data.get('job_description', ''),
-                    data.get('company_name', ''),
-                    data.get('regenerate'),
-                    data.get('custom_prompts') # Pass custom prompts
-                )
-                emit_progress(f"Successfully generated content with {model}!")
-                break 
-            except Exception as e:
-                print(f"Model {model} failed: {e}")
-                emit_progress(f"Model {model} failed. Trying next model...")
-                if model == models_to_try[-1]: 
-                    raise e 
+            used_keys = set()
+            while len(used_keys) < len(api_keys):
+                try:
+                    api_key = api_keys[len(used_keys)]
+                    used_keys.add(api_key)
+
+                    emit_progress(f"Attempting generation with {model} (API key {len(used_keys)}/{len(api_keys)})...")
+                    result = processor.generate_ai_customization(
+                        api_key,
+                        model,
+                        resume_content,
+                        selected_ids_as_int,
+                        data.get('job_description', ''),
+                        data.get('company_name', ''),
+                        data.get('regenerate'),
+                        data.get('custom_prompts') # Pass custom prompts
+                    )
+                    emit_progress(f"Successfully generated content with {model}!")
+                    break
+                except Exception as e:
+                    print(f"Model {model} with API key {len(used_keys)} failed: {e}")
+                    emit_progress(f"Model {model} failed. Trying next API key...")
+                    if len(used_keys) == len(api_keys):
+                        emit_progress(f"All API keys failed for {model}. Trying next model...")
+                        break
+            if result:
+                break
         
         if isinstance(data.get('regenerate'), dict) and 'single_paragraph' in data.get('regenerate'):
             result['original_paragraph'] = data['regenerate']['single_paragraph']
@@ -132,15 +161,33 @@ def generate_interview_prep_task(self, data):
         time.sleep(1)
 
     try:
-        api_key = os.environ.get('GEMINI_API_KEY')
-        if not api_key:
-            raise Exception("GEMINI_API_KEY not found on worker.")
-        
+        # Load multiple API keys from environment
+        api_keys = []
+        combined_keys = os.environ.get('GEMINI_API_KEYS', '')
+        if combined_keys:
+            api_keys = [key.strip() for key in combined_keys.split(',') if key.strip()]
+
+        if not api_keys:
+            for i in range(1, 11):  # Support up to 10 individual keys
+                key = os.environ.get(f'GEMINI_API_KEY_{i}')
+                if key:
+                    api_keys.append(key)
+                else:
+                    break
+
+        if not api_keys:
+            single_key = os.environ.get('GEMINI_API_KEY')
+            if single_key:
+                api_keys = [single_key]
+
+        if not api_keys:
+            raise Exception("No GEMINI_API_KEY found on worker.")
+
         emit_progress("Fetching application and resume...")
         application = Application.query.get(app_id)
         if not application:
             raise Exception("Application not found.")
-        
+
         resume = application.resume
         if not resume or not resume.structured_text or 'full_text' not in resume.structured_text:
             raise Exception("Cached resume text not found for this application.")
@@ -150,35 +197,44 @@ def generate_interview_prep_task(self, data):
             company_name=application.company_name
         ).order_by(ScrapedJD.created_date.desc()).first()
         job_title = scraped_jd.job_title if scraped_jd else f"Role at {application.company_name}"
-        
+
         emit_progress("Generating interview questions with AI... (this may take over a minute)")
 
         result = None
-        # MODIFIED: Implement robust model fallback logic based on user's selection
+        # MODIFIED: Implement robust model fallback logic with multiple API keys
         initial_model = data.get('ai_model', 'gemini-2.5-pro')
         models_to_try = [initial_model]
         if initial_model != 'gemini-2.5-flash':
             models_to_try.append('gemini-2.5-flash')
-        
+
+        # Try each model with all available API keys
         for model in models_to_try:
-            try:
-                emit_progress(f"Attempting generation with {model}...")
-                result = processor.generate_interview_prep(
-                    api_key,
-                    model,
-                    resume.structured_text['full_text'],
-                    application.job_description,
-                    application.company_name,
-                    job_title,
-                    data.get('custom_prompts') # Pass custom prompts
-                )
-                emit_progress(f"Successfully generated content with {model}!")
+            used_keys = set()
+            while len(used_keys) < len(api_keys):
+                try:
+                    api_key = api_keys[len(used_keys)]
+                    used_keys.add(api_key)
+
+                    emit_progress(f"Attempting generation with {model} (API key {len(used_keys)}/{len(api_keys)})...")
+                    result = processor.generate_interview_prep(
+                        api_key,
+                        model,
+                        resume.structured_text['full_text'],
+                        application.job_description,
+                        application.company_name,
+                        job_title,
+                        data.get('custom_prompts') # Pass custom prompts
+                    )
+                    emit_progress(f"Successfully generated content with {model}!")
+                    break
+                except Exception as e:
+                    print(f"Model {model} with API key {len(used_keys)} failed: {e}")
+                    emit_progress(f"Model {model} failed. Trying next API key...")
+                    if len(used_keys) == len(api_keys):
+                        emit_progress(f"All API keys failed for {model}. Trying next model...")
+                        break
+            if result:
                 break
-            except Exception as e:
-                print(f"Model {model} failed: {e}")
-                emit_progress(f"Model {model} failed. Trying next model...")
-                if model == models_to_try[-1]:
-                    raise e
 
         emit_progress("Saving results to database...")
         application.interview_prep = result

@@ -8,6 +8,7 @@ import uuid
 import re
 import shutil
 import traceback
+import hashlib
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, session, send_file, abort
 from flask_socketio import SocketIO, join_room
@@ -18,6 +19,8 @@ from docx import Document
 from dotenv import load_dotenv
 import pythoncom
 from celery import Celery, Task
+from sqlalchemy.orm import joinedload
+import redis
 
 load_dotenv()
 
@@ -54,6 +57,9 @@ db.init_app(app)
 migrate.init_app(app, db)
 socketio = SocketIO(app, message_queue='redis://localhost:6379/0', async_mode='eventlet')
 
+# Initialize Redis for caching
+redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+
 celery = make_celery(app)
 celery.conf.imports = ('celery_worker',)
 
@@ -64,12 +70,143 @@ ALLOWED_EXTENSIONS = {'docx'}
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
+def calculate_file_hash(file_path):
+    """Calculate SHA-256 hash of a file for cache invalidation"""
+    hash_sha256 = hashlib.sha256()
+    try:
+        with open(file_path, 'rb') as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                hash_sha256.update(chunk)
+        return hash_sha256.hexdigest()
+    except Exception as e:
+        print(f"Error calculating file hash: {e}")
+        return None
+
+def get_cached_resume_content(file_hash):
+    """Get cached resume content from Redis"""
+    try:
+        cached_data = redis_client.get(f"resume_content:{file_hash}")
+        if cached_data:
+            return json.loads(cached_data)
+    except Exception as e:
+        print(f"Error retrieving cached content: {e}")
+    return None
+
+def set_cached_resume_content(file_hash, content):
+    """Cache resume content in Redis with TTL"""
+    try:
+        redis_client.setex(
+            f"resume_content:{file_hash}",
+            3600,  # 1 hour TTL
+            json.dumps(content)
+        )
+    except Exception as e:
+        print(f"Error caching content: {e}")
+
 class ResumeProcessor:
     def __init__(self):
         self.gemini_models = {
             'gemini-2.5-flash': 'gemini-2.5-flash',
             'gemini-2.5-pro': 'gemini-2.5-pro'
         }
+
+        # Load multiple API keys from environment
+        self.api_keys = self._load_api_keys()
+
+    def _load_api_keys(self):
+        """Load multiple API keys from environment variables"""
+        api_keys = []
+
+        # Try to load comma-separated API keys first
+        combined_keys = os.environ.get('GEMINI_API_KEYS', '')
+        if combined_keys:
+            api_keys = [key.strip() for key in combined_keys.split(',') if key.strip()]
+
+        # If no combined keys, try individual keys
+        if not api_keys:
+            for i in range(1, 11):  # Support up to 10 individual keys
+                key = os.environ.get(f'GEMINI_API_KEY_{i}')
+                if key:
+                    api_keys.append(key)
+                else:
+                    break
+
+        # Fallback to single key for backward compatibility
+        if not api_keys:
+            single_key = os.environ.get('GEMINI_API_KEY')
+            if single_key:
+                api_keys = [single_key]
+
+        return api_keys
+
+    def get_next_api_key(self, used_keys=None):
+        """Get the next available API key, rotating through available keys"""
+        if used_keys is None:
+            used_keys = set()
+
+        available_keys = [key for key in self.api_keys if key not in used_keys]
+
+        if not available_keys:
+            if used_keys:
+                # Reset and try all keys again
+                available_keys = self.api_keys
+            else:
+                raise Exception("No API keys available")
+
+        return available_keys[0]
+
+    def _call_gemini_api_with_fallback(self, model, prompt, request_options=None, used_keys=None):
+        """Call Gemini API with automatic fallback to other keys and models"""
+        if used_keys is None:
+            used_keys = set()
+
+        if request_options is None:
+            request_options = {}
+
+        last_error = None
+
+        # Try current model with all available API keys
+        while len(used_keys) < len(self.api_keys):
+            try:
+                api_key = self.get_next_api_key(used_keys)
+                used_keys.add(api_key)
+
+                print(f"Trying API key {len(used_keys)}/{len(self.api_keys)} with model {model}")
+                genai.configure(api_key=api_key)
+                model_instance = genai.GenerativeModel(self.gemini_models[model])
+                response = model_instance.generate_content(prompt, request_options=request_options)
+
+                # Validate response
+                if response and response.text:
+                    json_match = re.search(r'\{.*\}', response.text, re.DOTALL)
+                    if not json_match:
+                        if response.text.strip().startswith('{'):
+                            return json.loads(response.text, strict=False)
+                        raise Exception("AI response did not contain a valid JSON object.")
+                    return json.loads(json_match.group(), strict=False)
+                else:
+                    raise Exception("Empty response from AI model")
+
+            except Exception as e:
+                print(f"API key {len(used_keys)} failed: {str(e)}")
+                last_error = e
+                continue
+
+        # If all API keys failed for current model, try alternative model
+        alternative_model = 'gemini-2.5-pro' if model == 'gemini-2.5-flash' else 'gemini-2.5-flash'
+
+        if alternative_model != model:
+            print(f"All API keys failed for {model}, trying {alternative_model}")
+            try:
+                return self._call_gemini_api_with_fallback(alternative_model, prompt, request_options, set())
+            except Exception as e:
+                last_error = e
+
+        # If everything failed, raise the last error
+        if last_error:
+            raise last_error
+        else:
+            raise Exception("All API keys and models failed")
 
     def extract_text_from_docx(self, file_path):
         try:
@@ -343,9 +480,19 @@ def before_request_func():
 
 @socketio.on('connect')
 def handle_connect():
+    print(f"SocketIO client connected: {request.sid}")
     if 'user_session_id' in session:
         join_room(session['user_session_id'])
         socketio.emit('session_id', {'id': session['user_session_id']})
+        print(f"Joined room: {session['user_session_id']}")
+
+@socketio.on('join')
+def handle_join(data):
+    session_id = data.get('session_id')
+    if session_id:
+        join_room(session_id)
+        socketio.emit('session_id', {'id': session_id})
+        print(f"Client joined room: {session_id}")
 
 @app.route('/')
 def index():
@@ -394,11 +541,21 @@ def upload_resume():
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{uuid.uuid4()}_{filename}")
         file.save(file_path)
 
-        try:
-            cached_structured_text = processor.extract_text_from_docx(file_path)
-        except Exception as e:
-            print(f"Error extracting text from {filename} on upload: {e}")
-            cached_structured_text = None
+        # Calculate file hash for caching
+        file_hash = calculate_file_hash(file_path)
+
+        # Check if we have cached content for this file
+        cached_structured_text = get_cached_resume_content(file_hash)
+
+        if not cached_structured_text:
+            # Parse the document and cache the result
+            try:
+                cached_structured_text = processor.extract_text_from_docx(file_path)
+                if file_hash:
+                    set_cached_resume_content(file_hash, cached_structured_text)
+            except Exception as e:
+                print(f"Error extracting text from {filename} on upload: {e}")
+                cached_structured_text = None
 
         new_resume = Resume(
             resume_name=request.form.get('resume_name'),
@@ -406,7 +563,8 @@ def upload_resume():
             user_session_id=session.get('user_session_id'),
             user_first_name=request.form.get('first_name'),
             user_last_name=request.form.get('last_name'),
-            structured_text=cached_structured_text
+            structured_text=cached_structured_text,
+            file_hash=file_hash
         )
         db.session.add(new_resume)
         db.session.commit()
@@ -423,12 +581,32 @@ def get_resume_details(resume_id):
     resume = Resume.query.get_or_404(resume_id)
     if resume.user_session_id != session.get('user_session_id'): abort(403)
     details = resume.to_dict()
+
     try:
         if resume.structured_text and 'paragraphs' in resume.structured_text:
+            # Use cached data if available
             details['paragraphs'] = resume.structured_text['paragraphs']
         else:
-            resume_content = processor.extract_text_from_docx(resume.original_file_path)
-            details['paragraphs'] = resume_content.get('paragraphs', [])
+            # Check cache first before parsing
+            if resume.file_hash:
+                cached_content = get_cached_resume_content(resume.file_hash)
+                if cached_content:
+                    details['paragraphs'] = cached_content.get('paragraphs', [])
+                    # Update the database with cached content
+                    resume.structured_text = cached_content
+                    db.session.commit()
+                else:
+                    # Parse and cache the document
+                    resume_content = processor.extract_text_from_docx(resume.original_file_path)
+                    details['paragraphs'] = resume_content.get('paragraphs', [])
+                    if resume.file_hash:
+                        set_cached_resume_content(resume.file_hash, resume_content)
+                        resume.structured_text = resume_content
+                        db.session.commit()
+            else:
+                # Fallback to direct parsing if no hash
+                resume_content = processor.extract_text_from_docx(resume.original_file_path)
+                details['paragraphs'] = resume_content.get('paragraphs', [])
     except Exception as e:
         details['paragraphs'] = []
         details['error'] = f"Could not read DOCX file: {e}"
@@ -478,13 +656,17 @@ def save_application():
 
 @app.route('/api/applications', methods=['GET'])
 def get_applications():
-    apps = Application.query.filter_by(user_session_id=session.get('user_session_id')).order_by(Application.created_date.desc()).all()
+    # Use optimized query with eager loading to avoid N+1 queries
+    apps = Application.get_with_resume(session.get('user_session_id'))
     return jsonify([app.to_dict() for app in apps])
 
 @app.route('/api/applications/<int:app_id>', methods=['GET'])
 def get_application_details(app_id):
-    app = Application.query.get_or_404(app_id)
-    if app.user_session_id != session.get('user_session_id'): abort(403)
+    # Use optimized query with eager loading
+    app = Application.query.options(joinedload(Application.resume)).filter_by(
+        id=app_id,
+        user_session_id=session.get('user_session_id')
+    ).first_or_404()
     return jsonify(app.to_dict())
 
 @app.route('/api/applications/<int:app_id>', methods=['PUT'])
@@ -616,6 +798,48 @@ def download_resume_file():
     data['session_id'] = session['user_session_id']
     task = celery.send_task('celery_worker.create_download_file_task', args=[data])
     return jsonify({'job_id': task.id})
+
+@app.route('/api/job-status/<job_id>', methods=['GET'])
+def get_job_status(job_id):
+    """Check the status of a Celery job and return results if completed"""
+    try:
+        from celery.result import AsyncResult
+        task = AsyncResult(job_id, app=celery)
+
+        if task.state == 'PENDING':
+            return jsonify({
+                'status': 'pending',
+                'job_id': job_id,
+                'message': 'Job is still processing'
+            })
+        elif task.state == 'SUCCESS':
+            result = task.result
+            return jsonify({
+                'status': 'completed',
+                'job_id': job_id,
+                'result': result,
+                'message': 'Job completed successfully'
+            })
+        elif task.state == 'FAILURE':
+            return jsonify({
+                'status': 'failed',
+                'job_id': job_id,
+                'error': str(task.info),
+                'message': 'Job failed'
+            })
+        else:
+            return jsonify({
+                'status': task.state,
+                'job_id': job_id,
+                'message': f'Job is in {task.state} state'
+            })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'job_id': job_id,
+            'error': str(e),
+            'message': 'Error checking job status'
+        })
 
 @app.route('/download/<filename>')
 def download_file(filename):
