@@ -28,10 +28,7 @@ ResumeAI is an AI-powered resume builder and analyzer that leverages large langu
      cd ResumeAI
      ```
 
-3. **Remove Database File**
-   - Delete the old database file to start fresh by navigating to instances folder
-
-4. **Update .env With Your Gemini API Key**
+3. **Update .env With Your Gemini API Key**
    - Open the `.env` file in the main folder.
    - Add or update this line with your [Google Gemini API key](https://aistudio.google.com/app/apikey):
      ```
@@ -42,11 +39,11 @@ ResumeAI is an AI-powered resume builder and analyzer that leverages large langu
      SECRET_KEY=your_flask_secret_key_here
      ```
 
-5. **Run Celery Worker**
+4. **Run Celery Worker**
    - On Windows, double-click or run the provided `.bat` file (`start_celery.bat`) to start the Celery worker.
    - Wait a bit for the worker to start.
 
-6. **Run the Application**
+5. **Run the Application**
    - In your terminal, run:
      ```sh
      python app.py
