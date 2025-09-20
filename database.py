@@ -35,6 +35,7 @@ class Application(db.Model):
     job_description = db.Column(db.Text, nullable=False)
     status = db.Column(db.String(50), default='not_applied')
     match_score = db.Column(db.Integer)
+    match_score_analysis = db.Column(db.Text)  # New field for match score analysis
     cover_letter = db.Column(db.Text)
     customized_paragraphs = db.Column(db.JSON)
     interview_prep = db.Column(db.JSON)
@@ -51,6 +52,7 @@ class Application(db.Model):
             'job_description': self.job_description,
             'status': self.status,
             'match_score': self.match_score,
+            'match_score_analysis': self.match_score_analysis,  # New field
             'cover_letter': self.cover_letter,
             'customized_paragraphs': self.customized_paragraphs,
             'interview_prep': self.interview_prep,

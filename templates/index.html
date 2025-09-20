@@ -335,10 +335,15 @@
                         </div>
                         <div class="mt-6" x-show="activeResult.match_score">
                             <h3 class="text-lg font-medium mb-3">🎯 Job Match Analysis</h3>
-                            <div class="bg-gray-50 rounded-lg p-4 flex items-center space-x-4 border">
-                                <div class="text-4xl font-bold" :class="activeResult.match_score >= 80 ? 'text-green-500' : 'text-yellow-500'" x-text="activeResult.match_score + '%'"></div>
-                                <div class="w-full bg-gray-200 rounded-full h-4">
-                                    <div class="h-4 rounded-full" :class="activeResult.match_score >= 80 ? 'bg-green-500' : 'bg-yellow-500'" :style="`width: ${activeResult.match_score}%`"></div>
+                            <div class="bg-gray-50 rounded-lg p-4 border">
+                                <div class="flex items-center space-x-4 mb-3">
+                                    <div class="text-4xl font-bold" :class="activeResult.match_score >= 80 ? 'text-green-500' : 'text-yellow-500'" x-text="activeResult.match_score + '%'"></div>
+                                    <div class="w-full bg-gray-200 rounded-full h-4">
+                                        <div class="h-4 rounded-full" :class="activeResult.match_score >= 80 ? 'bg-green-500' : 'bg-yellow-500'" :style="`width: ${activeResult.match_score}%`"></div>
+                                    </div>
+                                </div>
+                                <div x-show="activeResult.match_score_analysis" class="text-sm text-gray-600 italic border-t pt-3">
+                                    <p x-text="activeResult.match_score_analysis"></p>
                                 </div>
                             </div>
                         </div>
@@ -389,10 +394,15 @@
                         </div>
                         <div class="mt-6" x-show="activeApplication.match_score">
                             <h3 class="text-lg font-medium mb-3">🎯 Job Match Analysis</h3>
-                            <div class="bg-gray-50 rounded-lg p-4 flex items-center space-x-4 border">
-                                <div class="text-4xl font-bold" :class="activeApplication.match_score >= 80 ? 'text-green-500' : 'text-yellow-500'" x-text="activeApplication.match_score + '%'"></div>
-                                <div class="w-full bg-gray-200 rounded-full h-4">
-                                    <div class="h-4 rounded-full" :class="activeApplication.match_score >= 80 ? 'bg-green-500' : 'bg-yellow-500'" :style="`width: ${activeApplication.match_score}%`"></div>
+                            <div class="bg-gray-50 rounded-lg p-4 border">
+                                <div class="flex items-center space-x-4 mb-3">
+                                    <div class="text-4xl font-bold" :class="activeApplication.match_score >= 80 ? 'text-green-500' : 'text-yellow-500'" x-text="activeApplication.match_score + '%'"></div>
+                                    <div class="w-full bg-gray-200 rounded-full h-4">
+                                        <div class="h-4 rounded-full" :class="activeApplication.match_score >= 80 ? 'bg-green-500' : 'bg-yellow-500'" :style="`width: ${activeApplication.match_score}%`"></div>
+                                    </div>
+                                </div>
+                                <div x-show="activeApplication.match_score_analysis" class="text-sm text-gray-600 italic border-t pt-3">
+                                    <p x-text="activeApplication.match_score_analysis"></p>
                                 </div>
                             </div>
                         </div>
@@ -1011,6 +1021,7 @@ Generate two distinct categories of questions. For each question, provide both '
                             job_description: this.activeResult.job_description,
                             cover_letter: this.activeResult.cover_letter,
                             match_score: this.activeResult.match_score,
+                            match_score_analysis: this.activeResult.match_score_analysis,  // New field
                             customized_paragraphs: this.activeResult.customized_paragraphs
                         };
 

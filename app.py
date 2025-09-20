@@ -133,7 +133,7 @@ TASK: TRANSFORM A SINGLE PARAGRAPH
 
 CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:
 {JSON_STRUCTURE}""",
-            "cover_letter": """You are an expert career coach. Your task is to write a cover letter and provide a job match score based on the provided context. Return a single, valid JSON object.
+            "cover_letter": """You are an expert career coach. Your task is to write a cover letter, provide a job match score, and analyze the match based on the provided context. Return a single, valid JSON object.
 CONTEXT:
 - COMPANY: {COMPANY}
 - TARGET JOB DESCRIPTION:
@@ -141,11 +141,13 @@ CONTEXT:
 - FULL RESUME TEXT:
 {FULL_RESUME_TEXT}
 
-TASK: WRITE COVER LETTER & PROVIDE MATCH SCORE
+TASK: WRITE COVER LETTER, PROVIDE MATCH SCORE & ANALYSIS
 - Write a compelling, professional cover letter (3-4 paragraphs, 250-300 words).
 - Provide a brutally honest job match score (1-100).
+- Provide a detailed analysis of the match (2-3 sentences explaining the score rationale).
 - GUIDELINES: Use a professional tone, show knowledge of the company, and highlight key achievements from the resume. Use plain text only with NO MARKDOWN.
 - Match Score (1–100): 90–100 = exceptional; 80–89 = strong; 70–79 = good; below 70 = moderate to weak.
+- Analysis: Explain what factors contributed to the score, highlighting specific skill matches, experience alignment, and any gaps.
 
 CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:
 {JSON_STRUCTURE}""",
@@ -182,7 +184,7 @@ CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with t
         elif prompt_key == 'single_paragraph':
             json_requirement = "\n\nCRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:\n" + placeholders.get('JSON_STRUCTURE', '{ "enhanced_text": "The new, enhanced paragraph text here..." }')
         elif prompt_key == 'cover_letter':
-            json_requirement = "\n\nCRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:\n" + placeholders.get('JSON_STRUCTURE', '{\n  "cover_letter": "The full cover letter text here...",\n  "match_score": 85\n}')
+            json_requirement = "\n\nCRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:\n" + placeholders.get('JSON_STRUCTURE', '{\n  "cover_letter": "The full cover letter text here...",\n  "match_score": 85,\n  "match_score_analysis": "Detailed analysis of the match score rationale..."\n}')
         elif prompt_key == 'interview_prep':
             json_requirement = "\n\nCRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure. Do not add any text or markdown before or after the JSON object.\n" + placeholders.get('JSON_STRUCTURE', '{\n  "general_questions": [\n    { "question": "...", "talking_points": ["..."], "answer": "..." }\n  ],\n  "role_based_questions": [\n    { "question": "...", "talking_points": ["..."], "answer": "..." }\n  ]\n}')
 
@@ -235,7 +237,7 @@ CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with t
             'COMPANY': company_name,
             'JOB_DESCRIPTION': job_description,
             'FULL_RESUME_TEXT': resume_data['full_text'],
-            'JSON_STRUCTURE': '{\n  "cover_letter": "The full cover letter text here...",\n  "match_score": 85\n}'
+            'JSON_STRUCTURE': '{\n  "cover_letter": "The full cover letter text here...",\n  "match_score": 85,\n  "match_score_analysis": "Detailed analysis of the match score rationale..."\n}'
         }
         prompt = self._get_prompt('cover_letter', custom_prompts, placeholders)
         return self._call_gemini_api(model, prompt)
@@ -266,6 +268,7 @@ CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with t
                 cl_result = self._generate_cover_letter(model, resume_data, job_description, company_name, custom_prompts)
                 final_output['cover_letter'] = cl_result.get('cover_letter')
                 final_output['match_score'] = cl_result.get('match_score')
+                final_output['match_score_analysis'] = cl_result.get('match_score_analysis')
 
             return final_output
         except Exception as e:
@@ -462,6 +465,7 @@ def save_application():
         job_description=data.get('job_description', ''),
         status=data.get('status', 'not_applied'),
         match_score=data.get('match_score'),
+        match_score_analysis=data.get('match_score_analysis'),  # New field
         cover_letter=data.get('cover_letter'),
         customized_paragraphs=data.get('customized_paragraphs'),
         job_posting_url=data.get('job_posting_url'),  # Add job posting URL
