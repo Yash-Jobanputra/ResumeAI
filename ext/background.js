@@ -20,28 +20,45 @@ function scrapeLinkedInPage() {
     // Check for Easy Apply vs Normal Apply
     let application_type = 'Normal'; // Default
 
-    // Try multiple selectors for LinkedIn apply buttons
-    const applyButtons = document.querySelectorAll('span.artdeco-button__text, button[aria-label*="apply" i], button[data-test-id*="apply" i], a[data-test-id*="apply" i]');
+    // Look for the specific LinkedIn Easy Apply button structure
+    const easyApplyButton = document.querySelector('button.jobs-apply-button[data-live-test-job-apply-button] span.artdeco-button__text');
 
-    for (const button of applyButtons) {
-      const buttonText = button.textContent.trim();
-      const ariaLabel = button.getAttribute('aria-label') || '';
-      const dataTestId = button.getAttribute('data-test-id') || '';
-
+    if (easyApplyButton) {
+      const buttonText = easyApplyButton.textContent.trim();
       console.log('LinkedIn Apply Button Debug:', {
         text: buttonText,
-        ariaLabel: ariaLabel,
-        dataTestId: dataTestId
+        element: 'jobs-apply-button span.artdeco-button__text'
       });
 
-      // Check for Easy Apply in various forms
-      if (buttonText.toLowerCase().includes('easy apply') ||
-          ariaLabel.toLowerCase().includes('easy apply') ||
-          dataTestId.toLowerCase().includes('easy apply') ||
-          buttonText.toLowerCase().includes('easy') && buttonText.toLowerCase().includes('apply')) {
+      if (buttonText.toLowerCase().includes('easy apply')) {
         application_type = 'Easy Apply';
-        console.log('Detected Easy Apply button');
-        break;
+        console.log('Detected Easy Apply button via specific selector');
+      }
+    } else {
+      // Fallback: Try multiple selectors for LinkedIn apply buttons
+      const applyButtons = document.querySelectorAll('span.artdeco-button__text, button[aria-label*="apply" i], button[data-test-id*="apply" i], a[data-test-id*="apply" i]');
+
+      for (const button of applyButtons) {
+        const buttonText = button.textContent.trim();
+        const ariaLabel = button.getAttribute('aria-label') || '';
+        const dataTestId = button.getAttribute('data-test-id') || '';
+
+        console.log('LinkedIn Apply Button Debug (fallback):', {
+          text: buttonText,
+          ariaLabel: ariaLabel,
+          dataTestId: dataTestId,
+          className: button.className
+        });
+
+        // Check for Easy Apply in various forms
+        if (buttonText.toLowerCase().includes('easy apply') ||
+            ariaLabel.toLowerCase().includes('easy apply') ||
+            dataTestId.toLowerCase().includes('easy apply') ||
+            buttonText.toLowerCase().includes('easy') && buttonText.toLowerCase().includes('apply')) {
+          application_type = 'Easy Apply';
+          console.log('Detected Easy Apply button via fallback');
+          break;
+        }
       }
     }
 

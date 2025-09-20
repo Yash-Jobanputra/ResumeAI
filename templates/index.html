@@ -325,9 +325,26 @@
             <div x-show="mainView === 'scrapedJDs'" class="fade-in bg-white rounded-lg shadow-lg p-6">
                  <h2 class="text-2xl font-semibold mb-4">Scraped Job Descriptions</h2>
                  <p class="text-gray-600 mb-6 text-sm">Use the browser extension on a job posting page to send jobs here.</p>
+
+                 <!-- Pagination Controls -->
+                 <div x-show="scrapedJDs.length > 0" class="flex justify-between items-center mb-6">
+                    <div class="text-sm text-gray-600">
+                        Showing <span x-text="(currentPage - 1) * itemsPerPage + 1"></span> to <span x-text="Math.min(currentPage * itemsPerPage, scrapedJDs.length)"></span> of <span x-text="scrapedJDs.length"></span> jobs
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <button @click="previousPage()" :disabled="currentPage === 1" class="px-3 py-1 text-sm border rounded" :class="currentPage === 1 ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white text-gray-700 hover:bg-gray-50'">
+                            ← Previous
+                        </button>
+                        <span class="text-sm text-gray-600">Page <span x-text="currentPage"></span> of <span x-text="totalPages"></span></span>
+                        <button @click="nextPage()" :disabled="currentPage === totalPages" class="px-3 py-1 text-sm border rounded" :class="currentPage === totalPages ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white text-gray-700 hover:bg-gray-50'">
+                            Next →
+                        </button>
+                    </div>
+                 </div>
+
                  <div x-show="scrapedJDs.length === 0" class="text-center p-8"><p class="text-gray-500">No job descriptions have been scraped yet.</p></div>
                  <div x-show="scrapedJDs.length > 0" class="space-y-4">
-                    <template x-for="jd in scrapedJDs" :key="jd.id">
+                    <template x-for="jd in paginatedScrapedJDs" :key="jd.id">
                          <div class="border rounded-lg p-4 flex justify-between items-center hover:bg-gray-50" :class="jd.status === 'generated' ? 'bg-green-50 border-green-200' : 'bg-white border-gray-200'">
                             <div>
                                 <div class="flex items-center space-x-2">
@@ -346,7 +363,7 @@
                             </div>
                             <div class="flex space-x-2 flex-shrink-0 ml-4">
                                 <button
-                                    @click="useScrapedJD(jd)"
+                                    @click="useScrapedJD(jd); scrollToBottom()"
                                     :class="jd.status === 'generated' ? 'bg-blue-500 hover:bg-blue-600' : 'bg-green-500 hover:bg-green-600'"
                                     class="text-white px-4 py-2 rounded-md text-sm font-semibold"
                                 >
@@ -725,7 +742,7 @@
                     </select>
                 </div>
                 <div class="mt-8 flex justify-between">
-                    <button @click="navigateTo('dashboard')" class="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600">Back</button>
+                    <button @click="navigateTo('scrapedJDs')" class="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600">Back to Scraped JDs</button>
                     <button @click="runCustomization()" :disabled="!companyName.trim() || !jobDescription.trim() || isLoading" :class="isLoading ? 'btn-loading bg-green-600' : 'bg-green-600 hover:bg-green-700'" class="text-white px-6 py-2 rounded-lg disabled:opacity-50 font-semibold transition-all duration-200 hover-lift">
                         <span x-show="!isLoading">✨ Customize with AI</span>
                         <span x-show="isLoading" class="opacity-0">✨ Customize with AI</span>
@@ -786,6 +803,10 @@
                 jobDescription: '',
                 aiModel: 'gemini-2.5-pro',
                 scrapedJdIdToCredit: null,
+
+                // Pagination
+                currentPage: 1,
+                itemsPerPage: 5,
                 
                 // --- INITIALIZATION ---
                 init() {
@@ -1494,9 +1515,43 @@ Generate two distinct categories of questions. For each question, provide both '
                     ta.style.position = 'fixed'; ta.style.opacity = 0;
                     document.body.appendChild(ta);
                     ta.select();
-                    try { document.execCommand('copy'); this.showToast('success', 'Copied to clipboard!'); } 
+                    try { document.execCommand('copy'); this.showToast('success', 'Copied to clipboard!'); }
                     catch (err) { this.showToast('error', 'Failed to copy.'); }
                     document.body.removeChild(ta);
+                },
+
+                // --- PAGINATION FUNCTIONS ---
+                get totalPages() {
+                    return Math.ceil(this.scrapedJDs.length / this.itemsPerPage);
+                },
+
+                get paginatedScrapedJDs() {
+                    const start = (this.currentPage - 1) * this.itemsPerPage;
+                    const end = start + this.itemsPerPage;
+                    return this.scrapedJDs.slice(start, end);
+                },
+
+                nextPage() {
+                    if (this.currentPage < this.totalPages) {
+                        this.currentPage++;
+                    }
+                },
+
+                previousPage() {
+                    if (this.currentPage > 1) {
+                        this.currentPage--;
+                    }
+                },
+
+                // --- SCROLL FUNCTIONS ---
+                scrollToBottom() {
+                    // Smooth scroll to bottom of page after a short delay
+                    setTimeout(() => {
+                        window.scrollTo({
+                            top: document.body.scrollHeight,
+                            behavior: 'smooth'
+                        });
+                    }, 100);
                 }
             }
         }

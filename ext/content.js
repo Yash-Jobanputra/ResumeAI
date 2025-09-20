@@ -64,28 +64,45 @@ function scrapeLinkedInPage() {
     // Check for Easy Apply vs Normal Apply
     let application_type = 'Normal'; // Default
 
-    // Try multiple selectors for LinkedIn apply buttons
-    const applyButtons = document.querySelectorAll('span.artdeco-button__text, button[aria-label*="apply" i], button[data-test-id*="apply" i], a[data-test-id*="apply" i]');
+    // Look for the specific LinkedIn Easy Apply button structure
+    const easyApplyButton = document.querySelector('button.jobs-apply-button[data-live-test-job-apply-button] span.artdeco-button__text');
 
-    for (const button of applyButtons) {
-      const buttonText = button.textContent.trim();
-      const ariaLabel = button.getAttribute('aria-label') || '';
-      const dataTestId = button.getAttribute('data-test-id') || '';
-
+    if (easyApplyButton) {
+      const buttonText = easyApplyButton.textContent.trim();
       console.log('LinkedIn Apply Button Debug:', {
         text: buttonText,
-        ariaLabel: ariaLabel,
-        dataTestId: dataTestId
+        element: 'jobs-apply-button span.artdeco-button__text'
       });
 
-      // Check for Easy Apply in various forms
-      if (buttonText.toLowerCase().includes('easy apply') ||
-          ariaLabel.toLowerCase().includes('easy apply') ||
-          dataTestId.toLowerCase().includes('easy apply') ||
-          buttonText.toLowerCase().includes('easy') && buttonText.toLowerCase().includes('apply')) {
+      if (buttonText.toLowerCase().includes('easy apply')) {
         application_type = 'Easy Apply';
-        console.log('Detected Easy Apply button');
-        break;
+        console.log('Detected Easy Apply button via specific selector');
+      }
+    } else {
+      // Fallback: Try multiple selectors for LinkedIn apply buttons
+      const applyButtons = document.querySelectorAll('span.artdeco-button__text, button[aria-label*="apply" i], button[data-test-id*="apply" i], a[data-test-id*="apply" i]');
+
+      for (const button of applyButtons) {
+        const buttonText = button.textContent.trim();
+        const ariaLabel = button.getAttribute('aria-label') || '';
+        const dataTestId = button.getAttribute('data-test-id') || '';
+
+        console.log('LinkedIn Apply Button Debug (fallback):', {
+          text: buttonText,
+          ariaLabel: ariaLabel,
+          dataTestId: dataTestId,
+          className: button.className
+        });
+
+        // Check for Easy Apply in various forms
+        if (buttonText.toLowerCase().includes('easy apply') ||
+            ariaLabel.toLowerCase().includes('easy apply') ||
+            dataTestId.toLowerCase().includes('easy apply') ||
+            buttonText.toLowerCase().includes('easy') && buttonText.toLowerCase().includes('apply')) {
+          application_type = 'Easy Apply';
+          console.log('Detected Easy Apply button via fallback');
+          break;
+        }
       }
     }
 
@@ -418,31 +435,48 @@ function showCompletionMessage(message, type) {
   messageDiv.id = 'resume-ai-completion';
   messageDiv.style.cssText = `
     position: fixed !important;
-    top: 50% !important;
-    left: 50% !important;
-    transform: translate(-50%, -50%) !important;
-    background-color: ${type === 'success' ? '#4CAF50' : '#f44336'} !important;
+    top: 20px !important;
+    right: 20px !important;
+    background-color: ${type === 'success' ? '#4CAF50' : type === 'error' ? '#f44336' : '#2196F3'} !important;
     color: white !important;
-    padding: 20px 30px !important;
-    border-radius: 8px !important;
+    padding: 12px 16px !important;
+    border-radius: 6px !important;
     z-index: 999999 !important;
-    font-size: 16px !important;
-    font-weight: bold !important;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
-    text-align: center !important;
-    max-width: 400px !important;
+    font-size: 14px !important;
+    font-weight: 500 !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2) !important;
+    text-align: left !important;
+    max-width: 300px !important;
     word-wrap: break-word !important;
+    line-height: 1.4 !important;
+    cursor: pointer !important;
+    transition: opacity 0.3s ease !important;
   `;
 
   messageDiv.textContent = message;
   document.body.appendChild(messageDiv);
 
-  // Auto-remove after 5 seconds
+  // Add click to dismiss
+  messageDiv.addEventListener('click', () => {
+    messageDiv.style.opacity = '0';
+    setTimeout(() => {
+      if (messageDiv.parentNode) {
+        messageDiv.remove();
+      }
+    }, 300);
+  });
+
+  // Auto-remove after 4 seconds (shorter since it's smaller)
   setTimeout(() => {
     if (messageDiv.parentNode) {
-      messageDiv.remove();
+      messageDiv.style.opacity = '0';
+      setTimeout(() => {
+        if (messageDiv.parentNode) {
+          messageDiv.remove();
+        }
+      }, 300);
     }
-  }, 5000);
+  }, 4000);
 }
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
