@@ -47,42 +47,144 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   };
 
+  // Enhanced error handling with categorized, actionable messages
+  const getEnhancedErrorMessage = (error, context = '') => {
+    const errorString = error.toString().toLowerCase();
+
+    // Categorize errors and provide specific, actionable messages
+    if (errorString.includes('missing elements')) {
+      const missing = errorString.match(/missing elements: ([^)]+)/)?.[1] || '';
+      return {
+        message: `❌ Site Layout Changed: Missing ${missing} elements`,
+        suggestion: '💡 Try manual selection - click elements directly on the page',
+        type: 'error'
+      };
+    }
+
+    if (errorString.includes('network') || errorString.includes('fetch')) {
+      return {
+        message: '❌ Network Error: Unable to connect to the server',
+        suggestion: '💡 Check your internet connection and try again',
+        type: 'error'
+      };
+    }
+
+    if (errorString.includes('timeout')) {
+      return {
+        message: '⏱️ Request Timeout: Server took too long to respond',
+        suggestion: '💡 Try again or use manual selection for faster processing',
+        type: 'error'
+      };
+    }
+
+    if (errorString.includes('session')) {
+      return {
+        message: '⚠️ Session Required: Please enter a Session ID',
+        suggestion: '💡 Enter your session ID in the field above and try again',
+        type: 'error'
+      };
+    }
+
+    if (errorString.includes('permission') || errorString.includes('denied')) {
+      return {
+        message: '🔒 Permission Error: Unable to access page content',
+        suggestion: '💡 Refresh the page and try again, or use manual selection',
+        type: 'error'
+      };
+    }
+
+    if (errorString.includes('invalid') || errorString.includes('malformed')) {
+      return {
+        message: '📝 Data Error: Invalid or incomplete job information',
+        suggestion: '💡 Use manual selection to choose the correct elements',
+        type: 'error'
+      };
+    }
+
+    // Generic error with context-aware suggestions
+    const suggestions = [];
+    if (context.includes('linkedin')) {
+      suggestions.push('Try manual selection for LinkedIn pages');
+    } else if (context.includes('indeed')) {
+      suggestions.push('Try manual selection for Indeed pages');
+    } else {
+      suggestions.push('Try manual selection for this site');
+    }
+
+    return {
+      message: `❌ ${context ? `${context}: ` : ''}${error.message || error.toString()}`,
+      suggestion: `💡 ${suggestions[0]}`,
+      type: 'error'
+    };
+  };
+
   const sendDataToApi = async (data) => {
     const sessionId = sessionIdInput.value.trim();
     if (!sessionId) {
-      const errorMsg = 'Error: Session ID is required.';
-      setStatus(errorMsg, 'error');
-      throw new Error(errorMsg);
+      const errorInfo = getEnhancedErrorMessage(new Error('Session ID is required'), 'Session');
+      setStatus(`${errorInfo.message}\n${errorInfo.suggestion}`, errorInfo.type);
+      chrome.storage.local.set({
+        lastStatus: `${errorInfo.message}\n${errorInfo.suggestion}`,
+        lastStatusType: errorInfo.type
+      });
+      throw new Error('Session ID is required');
     }
 
     data.user_session_id = sessionId;
-    setStatus('Sending data to app...', 'info', null);
+    setStatus('📤 Sending data to app...', 'info', null);
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+
       const response = await fetch(API_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
+        signal: controller.signal
       });
 
+      clearTimeout(timeoutId);
+
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+        let errorMessage = `HTTP error! status: ${response.status}`;
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorMessage;
+        } catch (e) {
+          // Response might not be JSON
+        }
+
+        const errorInfo = getEnhancedErrorMessage(new Error(errorMessage), 'API');
+        setStatus(`${errorInfo.message}\n${errorInfo.suggestion}`, errorInfo.type);
+        chrome.storage.local.set({
+          lastStatus: `${errorInfo.message}\n${errorInfo.suggestion}`,
+          lastStatusType: errorInfo.type
+        });
+        throw new Error(errorMessage);
       }
 
-      setStatus('Successfully sent to app!', 'success');
+      setStatus('✅ Successfully sent to app!', 'success');
       chrome.storage.local.set({
-        lastStatus: 'Successfully sent to app!',
+        lastStatus: '✅ Successfully sent to app!',
         lastStatusType: 'success'
       });
 
       return response;
     } catch (error) {
       console.error('API Error:', error);
-      setStatus(`Error: ${error.message}`, 'error');
+
+      let errorInfo;
+      if (error.name === 'AbortError') {
+        errorInfo = getEnhancedErrorMessage(new Error('Request timeout'), 'Timeout');
+      } else {
+        errorInfo = getEnhancedErrorMessage(error, 'API');
+      }
+
+      setStatus(`${errorInfo.message}\n${errorInfo.suggestion}`, errorInfo.type);
       chrome.storage.local.set({
-        lastStatus: `Error: ${error.message}`,
-        lastStatusType: 'error'
+        lastStatus: `${errorInfo.message}\n${errorInfo.suggestion}`,
+        lastStatusType: errorInfo.type
       });
       throw error;
     }
@@ -149,7 +251,8 @@ function scrapeHarriPage() {
       function: scraperFunc,
     }, (injectionResults) => {
       if (chrome.runtime.lastError) {
-        setStatus(`Error: ${chrome.runtime.lastError.message}`, 'error');
+        const errorInfo = getEnhancedErrorMessage(chrome.runtime.lastError, 'Script Injection');
+        setStatus(`${errorInfo.message}\n${errorInfo.suggestion}`, errorInfo.type);
         return;
       }
 
@@ -157,7 +260,11 @@ function scrapeHarriPage() {
       if (result && !result.error) {
         sendDataToApi(result);
       } else {
-        setStatus(result?.error || 'Could not auto-parse page.', 'error');
+        const errorInfo = getEnhancedErrorMessage(
+          new Error(result?.error || 'Could not auto-parse page'),
+          hostname
+        );
+        setStatus(`${errorInfo.message}\n${errorInfo.suggestion}`, errorInfo.type);
       }
     });
   });
@@ -197,16 +304,17 @@ function scrapeHarriPage() {
       });
       
       sendDataToApi(request.data).then(() => {
-        setStatus('Successfully sent to app!', 'success', null);
-        chrome.storage.local.set({ 
-          lastStatus: 'Successfully sent to app!', 
-          lastStatusType: 'success' 
+        setStatus('✅ Successfully sent to app!', 'success', null);
+        chrome.storage.local.set({
+          lastStatus: '✅ Successfully sent to app!',
+          lastStatusType: 'success'
         });
       }).catch((error) => {
-        setStatus(`Error: ${error.message}`, 'error', null);
-        chrome.storage.local.set({ 
-          lastStatus: `Error: ${error.message}`, 
-          lastStatusType: 'error' 
+        const errorInfo = getEnhancedErrorMessage(error, 'Manual Selection');
+        setStatus(`${errorInfo.message}\n${errorInfo.suggestion}`, errorInfo.type, null);
+        chrome.storage.local.set({
+          lastStatus: `${errorInfo.message}\n${errorInfo.suggestion}`,
+          lastStatusType: errorInfo.type
         });
       });
       sendResponse({ status: "success" });

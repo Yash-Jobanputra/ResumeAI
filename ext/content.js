@@ -175,6 +175,62 @@ function startSelectionProcess() {
   });
 }
 
+function handleGlobalKeyboardShortcut(e) {
+  // Check for Ctrl+Shift+X (works on both Windows and Mac)
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'x') {
+    console.log('ResumeAI: Ctrl+Shift+X detected!', {
+      ctrlKey: e.ctrlKey,
+      metaKey: e.metaKey,
+      shiftKey: e.shiftKey,
+      key: e.key,
+      selectionMode: selectionMode
+    });
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Only start if not already active
+    if (selectionMode === 'inactive') {
+      console.log('ResumeAI: Starting manual selection process...');
+      // Trigger the manual selection process
+      chrome.runtime.sendMessage({
+        action: 'triggerKeyboardShortcut'
+      }).then(response => {
+        console.log('ResumeAI: Keyboard shortcut message sent successfully', response);
+      }).catch(error => {
+        console.error('ResumeAI: Failed to send keyboard shortcut message', error);
+      });
+    } else {
+      console.log('ResumeAI: Selection already active, ignoring shortcut');
+    }
+    return false;
+  }
+}
+
+function initGlobalKeyboardListener() {
+  // Add global keyboard listener that works even when popup isn't open
+  // Use capture: true to catch the event before page handlers
+  document.addEventListener('keydown', handleGlobalKeyboardShortcut, true);
+
+  // Also add to window and document body for better coverage
+  window.addEventListener('keydown', handleGlobalKeyboardShortcut, true);
+  if (document.body) {
+    document.body.addEventListener('keydown', handleGlobalKeyboardShortcut, true);
+  }
+
+  // Add keyup listener as well to catch any missed events
+  document.addEventListener('keyup', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'x') {
+      console.log('ResumeAI: Ctrl+Shift+X keyup detected');
+    }
+  }, true);
+
+  console.log('ResumeAI: Global keyboard listener initialized');
+}
+
+// Initialize the global keyboard listener when the script loads
+initGlobalKeyboardListener();
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'startManualSelection') {
     startSelectionProcess();
@@ -182,6 +238,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   } else if (request.action === 'cancelSelection') {
     stopSelectionProcess();
     sendResponse({ status: 'cancelled' });
+  } else if (request.action === 'triggerKeyboardShortcut') {
+    // Start the manual selection process when keyboard shortcut is triggered
+    startSelectionProcess();
+    sendResponse({ status: 'started' });
   }
   return true;
 });
