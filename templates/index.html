@@ -21,6 +21,9 @@
         @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; visibility: hidden; } }
         .placeholder-pill { cursor: grab; }
         .placeholder-pill:active { cursor: grabbing; }
+        .placeholder-input { position: relative; }
+        .placeholder-input.drag-over { border-color: #3b82f6; background-color: #eff6ff; }
+
     </style>
 </head>
 <body class="bg-gray-100 min-h-screen font-sans" x-data="resumeApp()" x-cloak>
@@ -85,10 +88,10 @@
                             <p class="text-xs text-gray-500 mb-3">Drag these placeholders and drop them into the text area below.</p>
                             <div class="flex flex-wrap gap-2 mb-4 p-3 bg-gray-50 rounded-lg border">
                                 <template x-for="placeholder in promptPlaceholders[key]" :key="placeholder">
-                                    <span class="placeholder-pill bg-blue-100 text-blue-800 text-xs font-mono px-2 py-1 rounded" draggable="true" x-text="placeholder" @dragstart="event.dataTransfer.setData('text/plain', placeholder)"></span>
+                                    <span class="placeholder-pill bg-blue-100 text-blue-800 text-xs font-mono px-2 py-1 rounded" draggable="true" x-text="placeholder" @dragstart="handleDragStart(event, placeholder)"></span>
                                 </template>
                             </div>
-                            <textarea x-ref="`${key}Textarea`" x-model="customPrompts[key]" rows="18" class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 font-mono text-sm" @drop.prevent="handleDrop(event, key)" @dragover.prevent></textarea>
+                            <textarea x-ref="`${key}Textarea`" x-model="customPrompts[key]" rows="18" class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 font-mono text-sm placeholder-input" :data-textarea-key="key" @drop="handleDrop(event, key)" @dragover="handleDragOver(event, key)" @dragleave="handleDragLeave(event, key)" @input="highlightPlaceholders(key)" contenteditable="true" spellcheck="false"></textarea>
                         </div>
                     </template>
                 </div>
@@ -561,10 +564,10 @@
                 defaultPrompts: {},
                 customPrompts: {},
                 promptPlaceholders: {
-                    paragraphs: ['{COMPANY}', '{JOB_DESCRIPTION}', '{PARAGRAPH_COUNT}', '{SELECTED_PARAGRAPHS_JSON}', '{TOTAL_WORD_LIMIT}', '{JSON_STRUCTURE}'],
-                    single_paragraph: ['{COMPANY}', '{JOB_DESCRIPTION}', '{ORIGINAL_PARAGRAPH}', '{WORD_LIMIT}', '{JSON_STRUCTURE}'],
-                    cover_letter: ['{COMPANY}', '{JOB_DESCRIPTION}', '{FULL_RESUME_TEXT}', '{JSON_STRUCTURE}'],
-                    interview_prep: ['{COMPANY}', '{JOB_TITLE}', '{JOB_DESCRIPTION}', '{FULL_RESUME_TEXT}', '{JSON_STRUCTURE}']
+                    paragraphs: ['{COMPANY}', '{JOB_DESCRIPTION}', '{PARAGRAPH_COUNT}', '{SELECTED_PARAGRAPHS_JSON}', '{TOTAL_WORD_LIMIT}'],
+                    single_paragraph: ['{COMPANY}', '{JOB_DESCRIPTION}', '{ORIGINAL_PARAGRAPH}', '{WORD_LIMIT}'],
+                    cover_letter: ['{COMPANY}', '{JOB_DESCRIPTION}', '{FULL_RESUME_TEXT}'],
+                    interview_prep: ['{COMPANY}', '{JOB_TITLE}', '{JOB_DESCRIPTION}', '{FULL_RESUME_TEXT}']
                 },
                 
                 // Job & Result Management
@@ -691,7 +694,7 @@
                 // --- PROMPT MANAGEMENT ---
                 defineDefaultPrompts() {
                     this.defaultPrompts = {
-                        paragraphs: `You are an expert career coach and professional resume writer. Your task is to transform the provided resume paragraphs to be compelling and tailored for the target role. Return a single, valid JSON object.
+                        paragraphs: `You are an expert career coach and professional resume writer. Your task is to transform the provided resume paragraphs to be compelling and tailored for the target role.
 CONTEXT:
 - COMPANY: {COMPANY}
 - TARGET JOB DESCRIPTION:
@@ -701,11 +704,8 @@ TASK: TRANSFORM {PARAGRAPH_COUNT} RESUME PARAGRAPHS
 - SELECTED PARAGRAPHS (as a JSON object of id:text):
 {SELECTED_PARAGRAPHS_JSON}
 - GUIDELINES: Inject hard and soft skill keywords from the JD wherever possible. Keep action word repetition low. Restructure sentences for maximum impact and flow. Use strong action verbs, quantify achievements, and align experiences with the target role.
-- CRITICAL: Only enhance what's there. Never fabricate new achievements. The total word count for all transformed paragraphs must not exceed {TOTAL_WORD_LIMIT}.
-
-CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:
-{JSON_STRUCTURE}`,
-                        single_paragraph: `You are an expert career coach and professional resume writer. Your task is to transform the provided resume paragraphs to be compelling and tailored for the target role. Return a single, valid JSON object.
+- CRITICAL: Only enhance what's there. Never fabricate new achievements. The total word count for all transformed paragraphs must not exceed {TOTAL_WORD_LIMIT}.`,
+                        single_paragraph: `You are an expert career coach and professional resume writer. Your task is to transform the provided resume paragraphs to be compelling and tailored for the target role.
 CONTEXT:
 - COMPANY: {COMPANY}
 - TARGET JOB DESCRIPTION:
@@ -714,11 +714,8 @@ CONTEXT:
 TASK: TRANSFORM A SINGLE PARAGRAPH
 - ORIGINAL PARAGRAPH: "{ORIGINAL_PARAGRAPH}"
 - GUIDELINES: Dramatically improve the paragraph by restructuring sentences for impact, using strong action verbs, quantifying achievements, and integrating keywords from the job description. Maintain a confident, results-oriented tone.
-- CRITICAL: Only enhance what's there. Do not fabricate new achievements. The new paragraph must be a similar length, not exceeding {WORD_LIMIT} words.
-
-CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:
-{JSON_STRUCTURE}`,
-                        cover_letter: `You are an expert career coach. Your task is to write a cover letter and provide a job match score based on the provided context. Return a single, valid JSON object.
+- CRITICAL: Only enhance what's there. Do not fabricate new achievements. The new paragraph must be a similar length, not exceeding {WORD_LIMIT} words.`,
+                        cover_letter: `You are an expert career coach. Your task is to write a cover letter and provide a job match score based on the provided context.
 CONTEXT:
 - COMPANY: {COMPANY}
 - TARGET JOB DESCRIPTION:
@@ -730,11 +727,8 @@ TASK: WRITE COVER LETTER & PROVIDE MATCH SCORE
 - Write a compelling, professional cover letter (3-4 paragraphs, 250-300 words).
 - Provide a brutally honest job match score (1-100).
 - GUIDELINES: Use a professional tone, show knowledge of the company, and highlight key achievements from the resume. Use plain text only with NO MARKDOWN.
-- Match Score (1–100): 90–100 = exceptional; 80–89 = strong; 70–79 = good; below 70 = moderate to weak.
-
-CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:
-{JSON_STRUCTURE}`,
-                        interview_prep: `You are an expert career coach and interview preparation specialist. Your task is to generate a comprehensive set of interview questions and exemplary answers based on the candidate's resume and the target job description. Return a single, valid JSON object.
+- Match Score (1–100): 90–100 = exceptional; 80–89 = strong; 70–79 = good; below 70 = moderate to weak.`,
+                        interview_prep: `You are an expert career coach and interview preparation specialist. Your task is to generate a comprehensive set of interview questions and exemplary answers based on the candidate's resume and the target job description.
 CONTEXT:
 - COMPANY: {COMPANY}
 - TARGET ROLE: {JOB_TITLE}
@@ -747,10 +741,7 @@ TASK: GENERATE INTERVIEW QUESTIONS & ANSWERS
 Generate two distinct categories of questions. For each question, provide both 'talking_points' (a bulleted list of key ideas to convey) and a complete sample 'answer'.
 
 1.  **General Questions (5 questions):** Tailored to the candidate's specific resume. Scrutinize their career path, skills, and experiences (e.g., job gaps, career changes, specific projects).
-2.  **Role-Based Questions (5 questions):** Highly specific to the technical and functional requirements of the job description, framed in the context of the candidate's resume.
-
-CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure. Do not add any text or markdown before or after the JSON object.
-{JSON_STRUCTURE}`
+2.  **Role-Based Questions (5 questions):** Highly specific to the technical and functional requirements of the job description, framed in the context of the candidate's resume.`
                     };
                 },
                 loadPrompts() {
@@ -766,24 +757,72 @@ CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with t
                     if(confirm('Are you sure you want to reset all prompts to their default values?')) {
                         this.customPrompts = JSON.parse(JSON.stringify(this.defaultPrompts));
                         this.showToast('info', 'Prompts have been reset to default.');
+                        // Force re-render of highlighting after reset
+                        this.$nextTick(() => {
+                            Object.keys(this.customPrompts).forEach(key => {
+                                this.highlightPlaceholders(key);
+                            });
+                        });
                     }
                 },
                 handleDrop(event, promptKey) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    console.log('Drop event fired for:', promptKey);
                     const placeholder = event.dataTransfer.getData('text/plain');
-                    const textarea = this.$refs[`${promptKey}Textarea`];
-                    if (!textarea || !placeholder) return;
+                    console.log('Placeholder data:', placeholder);
+
+                    // Find textarea by data attribute instead of x-ref
+                    const textarea = document.querySelector(`[data-textarea-key="${promptKey}"]`);
+                    console.log('Textarea found:', !!textarea);
+
+                    if (!textarea || !placeholder) {
+                        console.log('Missing textarea or placeholder:', { textarea: !!textarea, placeholder });
+                        return;
+                    }
 
                     const start = textarea.selectionStart;
                     const end = textarea.selectionEnd;
                     const currentValue = this.customPrompts[promptKey];
-                    
+                    console.log('Current value length:', currentValue.length, 'Start:', start, 'End:', end);
+
                     this.customPrompts[promptKey] = currentValue.substring(0, start) + placeholder + currentValue.substring(end);
+                    console.log('New value set, length:', this.customPrompts[promptKey].length);
 
                     this.$nextTick(() => {
                         textarea.focus();
                         textarea.selectionStart = textarea.selectionEnd = start + placeholder.length;
+                        this.highlightPlaceholders(promptKey);
+                        console.log('Drop completed for:', promptKey);
                     });
                 },
+                handleDragOver(event, promptKey) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    console.log('Drag over event for:', promptKey);
+                    const textarea = document.querySelector(`[data-textarea-key="${promptKey}"]`);
+                    if (textarea) {
+                        textarea.classList.add('drag-over');
+                        console.log('Added drag-over class');
+                    }
+                },
+                handleDragLeave(event, promptKey) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    console.log('Drag leave event for:', promptKey);
+                    const textarea = document.querySelector(`[data-textarea-key="${promptKey}"]`);
+                    if (textarea) {
+                        textarea.classList.remove('drag-over');
+                        console.log('Removed drag-over class');
+                    }
+                },
+                handleDragStart(event, placeholder) {
+                    console.log('Drag start event for placeholder:', placeholder);
+                    event.dataTransfer.setData('text/plain', placeholder);
+                    event.dataTransfer.effectAllowed = 'copy';
+                    console.log('Data set in drag start:', event.dataTransfer.getData('text/plain'));
+                },
+
 
 
                 // --- USER INFO ---

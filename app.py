@@ -167,14 +167,40 @@ Generate two distinct categories of questions. For each question, provide both '
 CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure. Do not add any text or markdown before or after the JSON object.
 {JSON_STRUCTURE}"""
         }
-        
+
+        # Get the base prompt (custom or default)
         prompt_template = (custom_prompts_dict or {}).get(prompt_key) or default_prompts.get(prompt_key)
-        
+
         # Replace placeholders
         for key, value in placeholders.items():
             placeholder_tag = f"{{{key}}}"
             prompt_template = prompt_template.replace(placeholder_tag, str(value))
-            
+
+        # ALWAYS append JSON structure requirement, even for custom prompts
+        if prompt_key == 'paragraphs':
+            json_requirement = "\n\nCRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:\n" + placeholders.get('JSON_STRUCTURE', '{ "customized_paragraphs": { "paragraph_id_1": "new_text_1", ... } }')
+        elif prompt_key == 'single_paragraph':
+            json_requirement = "\n\nCRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:\n" + placeholders.get('JSON_STRUCTURE', '{ "enhanced_text": "The new, enhanced paragraph text here..." }')
+        elif prompt_key == 'cover_letter':
+            json_requirement = "\n\nCRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:\n" + placeholders.get('JSON_STRUCTURE', '{\n  "cover_letter": "The full cover letter text here...",\n  "match_score": 85\n}')
+        elif prompt_key == 'interview_prep':
+            json_requirement = "\n\nCRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure. Do not add any text or markdown before or after the JSON object.\n" + placeholders.get('JSON_STRUCTURE', '{\n  "general_questions": [\n    { "question": "...", "talking_points": ["..."], "answer": "..." }\n  ],\n  "role_based_questions": [\n    { "question": "...", "talking_points": ["..."], "answer": "..." }\n  ]\n}')
+
+        prompt_template += json_requirement
+
+        # DEBUG: Print the final prompt being sent to AI
+        print(f"\n=== DEBUG: Final prompt for {prompt_key} ===")
+        print(f"Custom prompt provided: {custom_prompts_dict.get(prompt_key, 'None')[:200]}...")
+        print(f"Final prompt length: {len(prompt_template)}")
+        print(f"Contains JSON_STRUCTURE: {'JSON_STRUCTURE' in prompt_template}")
+        print(f"Contains 'JSON object': {'JSON object' in prompt_template}")
+        print(f"Contains 'CRITICAL OUTPUT': {'CRITICAL OUTPUT' in prompt_template}")
+        print("=== First 500 chars of prompt ===")
+        print(prompt_template[:500])
+        print("=== Last 500 chars of prompt ===")
+        print(prompt_template[-500:])
+        print("=== End Debug ===\n")
+
         return prompt_template
 
     def _generate_paragraphs(self, model, resume_data, selected_paragraph_ids, job_description, company_name, regenerate_type, custom_prompts):
