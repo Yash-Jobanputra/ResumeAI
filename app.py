@@ -594,6 +594,17 @@ def delete_scraped_jd(jd_id):
     db.session.commit()
     return jsonify({'message': 'Scraped JD deleted'})
 
+@app.route('/api/scraped-jds/<int:jd_id>/status', methods=['PUT'])
+def update_scraped_jd_status(jd_id):
+    jd = ScrapedJD.query.get_or_404(jd_id)
+    if jd.user_session_id != session.get('user_session_id'):
+        abort(403)
+    data = request.get_json()
+    if 'status' in data:
+        jd.status = data['status']
+        db.session.commit()
+    return jsonify(jd.to_dict())
+
 @app.route('/api/download_resume', methods=['POST'])
 def download_resume_file():
     data = request.get_json()

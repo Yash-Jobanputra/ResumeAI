@@ -69,6 +69,7 @@ class ScrapedJD(db.Model):
     page_url = db.Column(db.String(500), nullable=False)
     created_date = db.Column(db.DateTime, default=datetime.utcnow)
     user_session_id = db.Column(db.String(100), nullable=False)
+    status = db.Column(db.String(50), default='active')  # 'active' or 'generated'
 
     def to_dict(self):
         return {
@@ -79,4 +80,5 @@ class ScrapedJD(db.Model):
             'page_url': self.page_url,
             'created_date': self.created_date.isoformat(),
             'user_session_id': self.user_session_id,
+            'status': self.status,
         }

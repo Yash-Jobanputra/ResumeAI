@@ -70,6 +70,18 @@ def generate_customization_task(self, data):
         if data.get('regenerate'):
             result['regenerate'] = data.get('regenerate')
 
+        # Update scraped job status in database if it was used
+        if data.get('scraped_jd_id'):
+            try:
+                # Import here to avoid circular imports
+                from app import ScrapedJD
+                jd = ScrapedJD.query.get(data.get('scraped_jd_id'))
+                if jd and jd.user_session_id == session_id:
+                    jd.status = 'generated'
+                    db.session.commit()
+            except Exception as e:
+                print(f"Warning: Could not update scraped job status: {e}")
+
         socketio.emit('task_success', {'job_id': self.request.id, 'result': result}, room=session_id)
         return result
 

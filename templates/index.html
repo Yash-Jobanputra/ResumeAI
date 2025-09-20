@@ -172,17 +172,28 @@
                  <div x-show="scrapedJDs.length === 0" class="text-center p-8"><p class="text-gray-500">No job descriptions have been scraped yet.</p></div>
                  <div x-show="scrapedJDs.length > 0" class="space-y-4">
                     <template x-for="jd in scrapedJDs" :key="jd.id">
-                         <div class="border rounded-lg p-4 flex justify-between items-center hover:bg-gray-50">
+                         <div class="border rounded-lg p-4 flex justify-between items-center hover:bg-gray-50" :class="jd.status === 'generated' ? 'bg-green-50 border-green-200' : 'bg-white border-gray-200'">
                             <div>
-                                <h3 class="font-bold text-lg text-blue-600" x-text="jd.job_title"></h3>
+                                <div class="flex items-center space-x-2">
+                                    <h3 class="font-bold text-lg text-blue-600" x-text="jd.job_title"></h3>
+                                    <span x-show="jd.status === 'generated'" class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full font-medium">Generated</span>
+                                </div>
                                 <p class="text-md text-gray-700 font-semibold" x-text="jd.company_name"></p>
                                 <p class="text-xs text-gray-500 mt-1">
-                                    Scraped: <span x-text="new Date(jd.created_date).toLocaleString()"></span> | 
+                                    Scraped: <span x-text="new Date(jd.created_date).toLocaleString()"></span> |
                                     <a :href="jd.page_url" target="_blank" class="text-blue-500 hover:underline">Source</a>
                                 </p>
                             </div>
                             <div class="flex space-x-2 flex-shrink-0 ml-4">
-                                <button @click="useScrapedJD(jd)" class="bg-green-500 text-white px-4 py-2 rounded-md hover:bg-green-600 text-sm font-semibold">Customize</button>
+                                <button
+                                    @click="useScrapedJD(jd)"
+                                    :class="jd.status === 'generated' ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-500 hover:bg-green-600'"
+                                    class="text-white px-4 py-2 rounded-md text-sm font-semibold"
+                                    :disabled="jd.status === 'generated'"
+                                >
+                                    <span x-show="jd.status === 'generated'">Used</span>
+                                    <span x-show="jd.status !== 'generated'">Customize</span>
+                                </button>
                                 <button @click="confirmDelete(jd.id, 'scraped_jd')" class="bg-red-500 text-white px-3 py-2 rounded-md hover:bg-red-600 text-sm">🗑️</button>
                             </div>
                          </div>
@@ -653,7 +664,10 @@
                             const newResult = { id: data.job_id, timestamp: Date.now(), ...job, ...data.result };
                             this.completedJobs.unshift(newResult);
                             this.showToast('success', `AI result for ${job.company_name} is ready!`);
-                            if (job.scraped_jd_id) this.deleteScrapedJD(job.scraped_jd_id, false);
+                            // Refresh scraped JDs to get updated status from database
+                            if (job.scraped_jd_id) {
+                                await this.getScrapedJDs();
+                            }
                         }
                         localStorage.setItem('completedJobs', JSON.stringify(this.completedJobs));
                         this.activeJobs = this.activeJobs.filter(j => j.id !== data.job_id);
