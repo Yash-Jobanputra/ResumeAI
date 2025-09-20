@@ -197,112 +197,61 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // Determine which scraper to inject based on hostname
+    // Check if the site is supported
     const url = new URL(tab.url);
     const hostname = url.hostname.replace('www.', '').toLowerCase();
+    const supportedSites = ['linkedin.com', 'indeed.com', 'hiringcafe', 'hiring.cafe', 'hiring-cafe', 'harri.com'];
+    const isSupported = supportedSites.some(site => hostname.includes(site));
 
-    // Choose the scraper function to inject by name
-    let scraperFunc = null;
-    if (hostname.includes('linkedin.com')) {
-      scraperFunc = scrapeLinkedInPage;
-    } else if (hostname.includes('indeed.com')) {
-      scraperFunc = scrapeIndeedPage;
-    } else if (hostname.includes('hiringcafe') || hostname.includes('hiring.cafe') || hostname.includes('hiring-cafe')) {
-      scraperFunc = scrapeHiringCafePage;
-    } else if (hostname.includes('harri.com')) {
-      scraperFunc = scrapeHarriPage;
-    } else {
+    if (!isSupported) {
       setStatus('No auto-scraper available for this site. Try manual selection.', 'error');
       return;
     }
-// Harri.com auto-scraper
-function scrapeHarriPage() {
-  try {
-    // Role
-    const titleEl = document.querySelector('.position-name');
-    // Company
-    const companyEl = document.querySelector('.content[automation="jobLocation"] span');
-    // JD
-    const descriptionEl = document.querySelector('#job_description');
 
-    const missing = [];
-    if (!titleEl) missing.push('title');
-    if (!companyEl) missing.push('company');
-    if (!descriptionEl) missing.push('description');
-    if (missing.length) return { error: `Missing elements: ${missing.join(', ')}. Try manual selection.` };
-
-    // Remove "Description" header if present
-    let jdText = descriptionEl.innerText.trim();
-    jdText = jdText.replace(/^Description\s*\n?/i, '').trim();
-
-    return {
-      job_title: titleEl.innerText.trim(),
-      company_name: companyEl.innerText.trim(),
-      job_description: jdText,
-      page_url: window.location.href,
-    };
-  } catch (e) {
-    return { error: e.toString() };
-  }
-}
-
-    chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      function: scraperFunc,
-    }, (injectionResults) => {
+    // Trigger auto selection via background script
+    chrome.runtime.sendMessage({ action: 'triggerAutoSelection' }, (response) => {
       if (chrome.runtime.lastError) {
-        const errorInfo = getEnhancedErrorMessage(chrome.runtime.lastError, 'Script Injection');
-        setStatus(`${errorInfo.message}\n${errorInfo.suggestion}`, errorInfo.type);
-        return;
-      }
-
-      const result = injectionResults[0].result;
-      if (result && !result.error) {
-        sendDataToApi(result);
+        setStatus(`Error: ${chrome.runtime.lastError.message}`, 'error');
+      } else if (response.status === 'unsupported') {
+        setStatus(`No auto-scraper available for ${response.site}. Try manual selection.`, 'error');
       } else {
-        const errorInfo = getEnhancedErrorMessage(
-          new Error(result?.error || 'Could not auto-parse page'),
-          hostname
-        );
-        setStatus(`${errorInfo.message}\n${errorInfo.suggestion}`, errorInfo.type);
+        setStatus(`Auto selection started for ${hostname}...`, 'info');
       }
     });
   });
 
-  // NEW CORRECT MANUAL BUTTON HANDLER - Creates separate window
- manualParseBtn.addEventListener('click', async () => {
-  const windowUrl = chrome.runtime.getURL("selection_window.html");
-  
-  chrome.windows.create({
-    url: windowUrl,
-    type: "popup",
-    width: 200,  // Much smaller
-    height: 120, // Much smaller  
-    left: screen.availWidth - 220,  // Bottom-right corner
-    top: screen.availHeight - 140,
-    focused: true
-  }, async (newWindow) => {
+  // Manual button handler - uses background script approach
+  manualParseBtn.addEventListener('click', async () => {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    chrome.tabs.sendMessage(tab.id, { action: "startManualSelection" });
-    
-    setStatus('Manual selection window opened.', 'info');
-    chrome.storage.local.set({
-      lastStatus: 'Manual selection window opened.',
-      lastStatusType: 'info'
+    if (!tab || !tab.url) {
+      setStatus('Error: Could not determine active tab URL', 'error');
+      return;
+    }
+
+    // Send message to background script to trigger manual selection
+    chrome.runtime.sendMessage({ action: 'triggerKeyboardShortcut' }, (response) => {
+      if (chrome.runtime.lastError) {
+        setStatus(`Error: ${chrome.runtime.lastError.message}`, 'error');
+      } else {
+        setStatus('Manual selection started. Click elements on the page.', 'info');
+        chrome.storage.local.set({
+          lastStatus: 'Manual selection started. Click elements on the page.',
+          lastStatusType: 'info'
+        });
+      }
     });
   });
-});
 
 
-  // Listen for data from the content script
+  // Listen for data from the content script and background script
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "manualSelectionComplete") {
       setStatus('Manual selection complete! Sending to API...', 'success', null);
-      chrome.storage.local.set({ 
-        lastStatus: 'Manual selection complete! Sending to API...', 
-        lastStatusType: 'success' 
+      chrome.storage.local.set({
+        lastStatus: 'Manual selection complete! Sending to API...',
+        lastStatusType: 'success'
       });
-      
+
       sendDataToApi(request.data).then(() => {
         setStatus('✅ Successfully sent to app!', 'success', null);
         chrome.storage.local.set({
@@ -318,6 +267,53 @@ function scrapeHarriPage() {
         });
       });
       sendResponse({ status: "success" });
+    } else if (request.action === "triggerAutoSelectionFromBackground") {
+      // Handle auto selection triggered from background (keyboard shortcut)
+      console.log('Popup: Received auto selection trigger from background', request.hostname);
+
+      // Trigger the auto selection process (same as clicking Auto button)
+      const [tab] = chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab && tab.url) {
+        const url = new URL(tab.url);
+        const hostname = url.hostname.replace('www.', '').toLowerCase();
+
+        // Choose the scraper function to inject by name
+        let scraperFunc = null;
+        if (hostname.includes('linkedin.com')) {
+          scraperFunc = scrapeLinkedInPage;
+        } else if (hostname.includes('indeed.com')) {
+          scraperFunc = scrapeIndeedPage;
+        } else if (hostname.includes('hiringcafe') || hostname.includes('hiring.cafe') || hostname.includes('hiring-cafe')) {
+          scraperFunc = scrapeHiringCafePage;
+        } else if (hostname.includes('harri.com')) {
+          scraperFunc = scrapeHarriPage;
+        }
+
+        if (scraperFunc) {
+          chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            function: scraperFunc,
+          }, (injectionResults) => {
+            if (chrome.runtime.lastError) {
+              const errorInfo = getEnhancedErrorMessage(chrome.runtime.lastError, 'Script Injection');
+              setStatus(`${errorInfo.message}\n${errorInfo.suggestion}`, errorInfo.type);
+              return;
+            }
+
+            const result = injectionResults[0].result;
+            if (result && !result.error) {
+              sendDataToApi(result);
+            } else {
+              const errorInfo = getEnhancedErrorMessage(
+                new Error(result?.error || 'Could not auto-parse page'),
+                hostname
+              );
+              setStatus(`${errorInfo.message}\n${errorInfo.suggestion}`, errorInfo.type);
+            }
+          });
+        }
+      }
+      sendResponse({ status: "handled" });
     }
     return true;
   });

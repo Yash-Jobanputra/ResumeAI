@@ -124,32 +124,32 @@ function captureElement(e) {
     selectedData.job_title = text;
     selectionStep = 'company';
     updateUI('Click to select the COMPANY NAME (Press Esc to cancel)', 2);
-    chrome.runtime.sendMessage({ 
-      action: 'manualSelectionStep', 
+    chrome.runtime.sendMessage({
+      action: 'manualSelectionStep',
       step: 'Select Company Name',
       progress: { current: 2, total: 3, data: selectedData }
     });
-    
+
   } else if (selectionStep === 'company') {
     selectedData.company_name = text;
     selectionStep = 'description';
     updateUI('Click to select the JOB DESCRIPTION area (Press Esc to cancel)', 3);
-    chrome.runtime.sendMessage({ 
-      action: 'manualSelectionStep', 
+    chrome.runtime.sendMessage({
+      action: 'manualSelectionStep',
       step: 'Select Job Description',
       progress: { current: 3, total: 3, data: selectedData }
     });
-    
+
   } else if (selectionStep === 'description') {
     selectedData.job_description = text;
-    
+
     // Show completion message briefly
     updateUI('✓ Selection Complete! Sending to API...', 3);
     setTimeout(() => removeUI(), 2000);
-    
-    chrome.runtime.sendMessage({ 
-      action: 'manualSelectionComplete', 
-      data: selectedData 
+
+    chrome.runtime.sendMessage({
+      action: 'manualSelectionComplete',
+      data: selectedData
     });
     stopSelectionProcess();
   }
@@ -176,7 +176,7 @@ function startSelectionProcess() {
 }
 
 function handleGlobalKeyboardShortcut(e) {
-  // Check for Ctrl+Shift+X (works on both Windows and Mac)
+  // Check for Ctrl+Shift+X (manual selection)
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'x') {
     console.log('ResumeAI: Ctrl+Shift+X detected!', {
       ctrlKey: e.ctrlKey,
@@ -205,6 +205,31 @@ function handleGlobalKeyboardShortcut(e) {
     }
     return false;
   }
+
+  // Check for Ctrl+Shift+E (auto selection)
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'e') {
+    console.log('ResumeAI: Ctrl+Shift+E detected!', {
+      ctrlKey: e.ctrlKey,
+      metaKey: e.metaKey,
+      shiftKey: e.shiftKey,
+      key: e.key
+    });
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Trigger auto selection
+    console.log('ResumeAI: Starting auto selection process...');
+    chrome.runtime.sendMessage({
+      action: 'triggerAutoSelection'
+    }).then(response => {
+      console.log('ResumeAI: Auto selection message sent successfully', response);
+    }).catch(error => {
+      console.error('ResumeAI: Failed to send auto selection message', error);
+    });
+
+    return false;
+  }
 }
 
 function initGlobalKeyboardListener() {
@@ -231,6 +256,45 @@ function initGlobalKeyboardListener() {
 // Initialize the global keyboard listener when the script loads
 initGlobalKeyboardListener();
 
+function showCompletionMessage(message, type) {
+  // Remove any existing completion message
+  const existingMessage = document.getElementById('resume-ai-completion');
+  if (existingMessage) {
+    existingMessage.remove();
+  }
+
+  // Create completion message element
+  const messageDiv = document.createElement('div');
+  messageDiv.id = 'resume-ai-completion';
+  messageDiv.style.cssText = `
+    position: fixed !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    background-color: ${type === 'success' ? '#4CAF50' : '#f44336'} !important;
+    color: white !important;
+    padding: 20px 30px !important;
+    border-radius: 8px !important;
+    z-index: 999999 !important;
+    font-size: 16px !important;
+    font-weight: bold !important;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
+    text-align: center !important;
+    max-width: 400px !important;
+    word-wrap: break-word !important;
+  `;
+
+  messageDiv.textContent = message;
+  document.body.appendChild(messageDiv);
+
+  // Auto-remove after 5 seconds
+  setTimeout(() => {
+    if (messageDiv.parentNode) {
+      messageDiv.remove();
+    }
+  }, 5000);
+}
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'startManualSelection') {
     startSelectionProcess();
@@ -242,6 +306,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // Start the manual selection process when keyboard shortcut is triggered
     startSelectionProcess();
     sendResponse({ status: 'started' });
+  } else if (request.action === 'showCompletionMessage') {
+    showCompletionMessage(request.message, request.type);
+    sendResponse({ status: 'shown' });
   }
   return true;
 });
