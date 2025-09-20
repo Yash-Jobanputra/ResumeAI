@@ -88,15 +88,12 @@ class ResumeProcessor:
             raise Exception(f"Error processing DOCX file: {str(e)}")
 
     def _call_gemini_api(self, model, prompt, request_options=None):
-        """Helper function to make the API call and parse JSON."""
         if request_options is None:
             request_options = {}
         try:
             response = model.generate_content(prompt, request_options=request_options)
-            # Use regex to find the JSON object within the response text, as seen in your Postman test.
             json_match = re.search(r'\{.*\}', response.text, re.DOTALL)
             if not json_match:
-                # Fallback for cases where the model might not wrap in markdown
                 if response.text.strip().startswith('{'):
                      return json.loads(response.text, strict=False)
                 raise Exception("AI response did not contain a valid JSON object.")
@@ -106,142 +103,129 @@ class ResumeProcessor:
             print(f"Full response text was: {response.text if 'response' in locals() else 'N/A'}")
             raise
 
-    def _generate_paragraphs(self, model, resume_data, selected_paragraph_ids, job_description, company_name, regenerate_type):
-        """Generates only the customized paragraphs."""
-        prompt_parts = [
-            "You are an expert career coach and professional resume writer. Your task is to transform the provided resume paragraphs to be compelling and tailored for the target role. Return a single, valid JSON object."
-        ]
-        prompt_parts.append(f"""
+    # MODIFIED: Logic to handle custom prompts
+    def _get_prompt(self, prompt_key, custom_prompts_dict, placeholders):
+        default_prompts = {
+            "paragraphs": """You are an expert career coach and professional resume writer. Your task is to transform the provided resume paragraphs to be compelling and tailored for the target role. Return a single, valid JSON object.
 CONTEXT:
-- COMPANY: {company_name}
+- COMPANY: {COMPANY}
 - TARGET JOB DESCRIPTION:
-{job_description}
-""")
-        if isinstance(regenerate_type, dict) and 'single_paragraph' in regenerate_type:
-            para_text = regenerate_type['single_paragraph']
-            original_words = len(para_text.split())
-            prompt_parts.append(f"""
-TASK: TRANSFORM A SINGLE PARAGRAPH
-- ORIGINAL PARAGRAPH: "{para_text}"
-- GUIDELINES: Dramatically improve the paragraph by restructuring sentences for impact, using strong action verbs, quantifying achievements, and integrating keywords from the job description. Maintain a confident, results-oriented tone.
-- CRITICAL: Only enhance what's there. Do not fabricate new achievements. The new paragraph must be a similar length, not exceeding {original_words + 15} words.
-""")
-            json_structure = '{{ "enhanced_text": "The new, enhanced paragraph text here..." }}'
-        else:
-            selected_paragraphs_dict = {p['id']: p['text'] for p in resume_data['paragraphs'] if p['id'] in selected_paragraph_ids}
-            total_original_words = sum(len(text.split()) for text in selected_paragraphs_dict.values())
-            prompt_parts.append(f"""
-TASK: TRANSFORM {len(selected_paragraphs_dict)} RESUME PARAGRAPHS
-- SELECTED PARAGRAPHS (as a JSON object of id:text):
-{json.dumps(selected_paragraphs_dict, indent=2)}
-- GUIDELINES: Inject hard and soft skill keywords from the JD wherever possible. Keep action word repetition low. Restructure sentences for maximum impact and flow. Use strong action verbs, quantify achievements, and align experiences with the target role.
-- CRITICAL: Only enhance what's there. Never fabricate new achievements. The total word count for all transformed paragraphs must not exceed {total_original_words + 20}.
-""")
-            json_structure = '{{ "customized_paragraphs": {{ "paragraph_id_1": "new_text_1", ... }} }}'
-        
-        prompt_parts.append(f"""
-CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:
-{json_structure}
-""")
-        return self._call_gemini_api(model, "\n".join(prompt_parts))
+{JOB_DESCRIPTION}
 
-    def _generate_cover_letter(self, model, resume_data, job_description, company_name):
-        """Generates only the cover letter and match score."""
-        prompt_parts = [
-            "You are an expert career coach. Your task is to write a cover letter and provide a job match score based on the provided context. Return a single, valid JSON object."
-        ]
-        prompt_parts.append(f"""
+TASK: TRANSFORM {PARAGRAPH_COUNT} RESUME PARAGRAPHS
+- SELECTED PARAGRAPHS (as a JSON object of id:text):
+{SELECTED_PARAGRAPHS_JSON}
+- GUIDELINES: Inject hard and soft skill keywords from the JD wherever possible. Keep action word repetition low. Restructure sentences for maximum impact and flow. Use strong action verbs, quantify achievements, and align experiences with the target role.
+- CRITICAL: Only enhance what's there. Never fabricate new achievements. The total word count for all transformed paragraphs must not exceed {TOTAL_WORD_LIMIT}.
+
+CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:
+{JSON_STRUCTURE}""",
+            "single_paragraph": """You are an expert career coach and professional resume writer. Your task is to transform the provided resume paragraphs to be compelling and tailored for the target role. Return a single, valid JSON object.
 CONTEXT:
-- COMPANY: {company_name}
+- COMPANY: {COMPANY}
 - TARGET JOB DESCRIPTION:
-{job_description}
+{JOB_DESCRIPTION}
+
+TASK: TRANSFORM A SINGLE PARAGRAPH
+- ORIGINAL PARAGRAPH: "{ORIGINAL_PARAGRAPH}"
+- GUIDELINES: Dramatically improve the paragraph by restructuring sentences for impact, using strong action verbs, quantifying achievements, and integrating keywords from the job description. Maintain a confident, results-oriented tone.
+- CRITICAL: Only enhance what's there. Do not fabricate new achievements. The new paragraph must be a similar length, not exceeding {WORD_LIMIT} words.
+
+CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:
+{JSON_STRUCTURE}""",
+            "cover_letter": """You are an expert career coach. Your task is to write a cover letter and provide a job match score based on the provided context. Return a single, valid JSON object.
+CONTEXT:
+- COMPANY: {COMPANY}
+- TARGET JOB DESCRIPTION:
+{JOB_DESCRIPTION}
 - FULL RESUME TEXT:
-{resume_data['full_text']}
-""")
-        prompt_parts.append("""
+{FULL_RESUME_TEXT}
+
 TASK: WRITE COVER LETTER & PROVIDE MATCH SCORE
 - Write a compelling, professional cover letter (3-4 paragraphs, 250-300 words).
 - Provide a brutally honest job match score (1-100).
 - GUIDELINES: Use a professional tone, show knowledge of the company, and highlight key achievements from the resume. Use plain text only with NO MARKDOWN.
 - Match Score (1–100): 90–100 = exceptional; 80–89 = strong; 70–79 = good; below 70 = moderate to weak.
-""")
-        prompt_parts.append("""
+
 CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:
-{
-  "cover_letter": "The full cover letter text here...",
-  "match_score": 85
-}
-""")
-        return self._call_gemini_api(model, "\n".join(prompt_parts))
-    
-    def _get_interview_prep_prompt_text(self, resume_full_text, job_description, company_name, job_title):
-        """Constructs and returns the full text of the interview prep prompt."""
-        prompt_parts = [
-            "You are an expert career coach and interview preparation specialist. Your task is to generate a comprehensive set of interview questions and exemplary answers based on the candidate's resume and the target job description. Return a single, valid JSON object."
-        ]
-        prompt_parts.append(f"""
+{JSON_STRUCTURE}""",
+            "interview_prep": """You are an expert career coach and interview preparation specialist. Your task is to generate a comprehensive set of interview questions and exemplary answers based on the candidate's resume and the target job description. Return a single, valid JSON object.
 CONTEXT:
-- COMPANY: {company_name}
-- TARGET ROLE: {job_title}
+- COMPANY: {COMPANY}
+- TARGET ROLE: {JOB_TITLE}
 - TARGET JOB DESCRIPTION:
-{job_description}
+{JOB_DESCRIPTION}
 - CANDIDATE'S FULL RESUME TEXT:
-{resume_full_text}
-""")
-        prompt_parts.append("""
+{FULL_RESUME_TEXT}
+
 TASK: GENERATE INTERVIEW QUESTIONS & ANSWERS
 Generate two distinct categories of questions. For each question, provide both 'talking_points' (a bulleted list of key ideas to convey) and a complete sample 'answer'.
 
 1.  **General Questions (5 questions):** Tailored to the candidate's specific resume. Scrutinize their career path, skills, and experiences (e.g., job gaps, career changes, specific projects).
 2.  **Role-Based Questions (5 questions):** Highly specific to the technical and functional requirements of the job description, framed in the context of the candidate's resume.
-""")
-        json_structure = """
-{
-  "general_questions": [
-    {
-      "question": "The generated question text.",
-      "talking_points": [
-        "A key talking point.",
-        "Another talking point."
-      ],
-      "answer": "A complete sample answer."
-    }
-  ],
-  "role_based_questions": [
-    {
-      "question": "The generated question text.",
-      "talking_points": [
-        "A key talking point.",
-        "Another talking point."
-      ],
-      "answer": "A complete sample answer."
-    }
-  ]
-}
-"""
-        prompt_parts.append(f"""
-CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure. Do not add any text or markdown before or after the JSON object.
-{json_structure}
-""")
-        return "\n".join(prompt_parts)
 
-    def generate_ai_customization(self, api_key, model_name, resume_data, selected_paragraph_ids, job_description, company_name, regenerate_type=None):
+CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure. Do not add any text or markdown before or after the JSON object.
+{JSON_STRUCTURE}"""
+        }
+        
+        prompt_template = (custom_prompts_dict or {}).get(prompt_key) or default_prompts.get(prompt_key)
+        
+        # Replace placeholders
+        for key, value in placeholders.items():
+            placeholder_tag = f"{{{key}}}"
+            prompt_template = prompt_template.replace(placeholder_tag, str(value))
+            
+        return prompt_template
+
+    def _generate_paragraphs(self, model, resume_data, selected_paragraph_ids, job_description, company_name, regenerate_type, custom_prompts):
+        if isinstance(regenerate_type, dict) and 'single_paragraph' in regenerate_type:
+            para_text = regenerate_type['single_paragraph']
+            original_words = len(para_text.split())
+            placeholders = {
+                'COMPANY': company_name,
+                'JOB_DESCRIPTION': job_description,
+                'ORIGINAL_PARAGRAPH': para_text,
+                'WORD_LIMIT': original_words + 15,
+                'JSON_STRUCTURE': '{ "enhanced_text": "The new, enhanced paragraph text here..." }'
+            }
+            prompt = self._get_prompt('single_paragraph', custom_prompts, placeholders)
+        else:
+            selected_paragraphs_dict = {p['id']: p['text'] for p in resume_data['paragraphs'] if p['id'] in selected_paragraph_ids}
+            total_original_words = sum(len(text.split()) for text in selected_paragraphs_dict.values())
+            placeholders = {
+                'COMPANY': company_name,
+                'JOB_DESCRIPTION': job_description,
+                'PARAGRAPH_COUNT': len(selected_paragraphs_dict),
+                'SELECTED_PARAGRAPHS_JSON': json.dumps(selected_paragraphs_dict, indent=2),
+                'TOTAL_WORD_LIMIT': total_original_words + 20,
+                'JSON_STRUCTURE': '{ "customized_paragraphs": { "paragraph_id_1": "new_text_1", ... } }'
+            }
+            prompt = self._get_prompt('paragraphs', custom_prompts, placeholders)
+        
+        return self._call_gemini_api(model, prompt)
+
+    def _generate_cover_letter(self, model, resume_data, job_description, company_name, custom_prompts):
+        placeholders = {
+            'COMPANY': company_name,
+            'JOB_DESCRIPTION': job_description,
+            'FULL_RESUME_TEXT': resume_data['full_text'],
+            'JSON_STRUCTURE': '{\n  "cover_letter": "The full cover letter text here...",\n  "match_score": 85\n}'
+        }
+        prompt = self._get_prompt('cover_letter', custom_prompts, placeholders)
+        return self._call_gemini_api(model, prompt)
+
+    def generate_ai_customization(self, api_key, model_name, resume_data, selected_paragraph_ids, job_description, company_name, regenerate_type=None, custom_prompts=None):
         try:
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel(self.gemini_models[model_name])
             
-            final_output = {
-                'customized_paragraphs': {},
-                'cover_letter': '',
-                'match_score': None,
-                'enhanced_text': None
-            }
+            final_output = {'customized_paragraphs': {}, 'cover_letter': '', 'match_score': None, 'enhanced_text': None}
 
             do_paragraphs = regenerate_type is None or regenerate_type == 'paragraphs' or isinstance(regenerate_type, dict)
             do_cover_letter = regenerate_type is None or regenerate_type == 'cover_letter'
 
             if do_paragraphs:
-                para_result = self._generate_paragraphs(model, resume_data, selected_paragraph_ids, job_description, company_name, regenerate_type)
+                para_result = self._generate_paragraphs(model, resume_data, selected_paragraph_ids, job_description, company_name, regenerate_type, custom_prompts)
                 final_output['enhanced_text'] = para_result.get('enhanced_text')
                 if 'customized_paragraphs' in para_result:
                     id_to_text_map = {p['id']: p['text'] for p in resume_data['paragraphs']}
@@ -253,7 +237,7 @@ CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with t
                             print(f"!! DEBUG WARNING: AI returned paragraph ID '{pid}' which was not found. Skipping.")
 
             if do_cover_letter:
-                cl_result = self._generate_cover_letter(model, resume_data, job_description, company_name)
+                cl_result = self._generate_cover_letter(model, resume_data, job_description, company_name, custom_prompts)
                 final_output['cover_letter'] = cl_result.get('cover_letter')
                 final_output['match_score'] = cl_result.get('match_score')
 
@@ -262,16 +246,27 @@ CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with t
             print(f"AI Generation Error: {traceback.format_exc()}")
             raise Exception(f"Error generating AI customization: {str(e)}")
             
-    def generate_interview_prep(self, api_key, model_name, resume_full_text, job_description, company_name, job_title):
+    def generate_interview_prep(self, api_key, model_name, resume_full_text, job_description, company_name, job_title, custom_prompts=None):
         try:
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel(self.gemini_models[model_name])
             
-            prompt = self._get_interview_prep_prompt_text(
-                resume_full_text, job_description, company_name, job_title
-            )
-            
-            # MODIFIED: Added a 300-second timeout for this long-running generation task.
+            json_structure = """{
+  "general_questions": [
+    { "question": "...", "talking_points": ["..."], "answer": "..." }
+  ],
+  "role_based_questions": [
+    { "question": "...", "talking_points": ["..."], "answer": "..." }
+  ]
+}"""
+            placeholders = {
+                'COMPANY': company_name,
+                'JOB_TITLE': job_title,
+                'JOB_DESCRIPTION': job_description,
+                'FULL_RESUME_TEXT': resume_full_text,
+                'JSON_STRUCTURE': json_structure
+            }
+            prompt = self._get_prompt('interview_prep', custom_prompts, placeholders)
             return self._call_gemini_api(model, prompt, request_options={"timeout": 300})
         except Exception as e:
             print(f"Interview Prep Generation Error: {traceback.format_exc()}")
@@ -491,7 +486,8 @@ def generate_interview_prep(app_id):
         task_data = {
             'app_id': app.id,
             'session_id': session['user_session_id'],
-            'ai_model': data.get('ai_model', 'gemini-2.5-pro') # Default to Pro for better results
+            'ai_model': data.get('ai_model', 'gemini-2.5-pro'),
+            'custom_prompts': data.get('custom_prompts') # Pass custom prompts
         }
         
         task = celery.send_task('celery_worker.generate_interview_prep_task', args=[task_data])
@@ -500,7 +496,8 @@ def generate_interview_prep(app_id):
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/applications/<int:app_id>/interview-prompt-text', methods=['GET'])
+# MODIFIED: Endpoint now a POST to receive custom prompt in body
+@app.route('/api/applications/<int:app_id>/interview-prompt-text', methods=['POST'])
 def get_interview_prompt_text(app_id):
     try:
         application = Application.query.get_or_404(app_id)
@@ -517,12 +514,19 @@ def get_interview_prompt_text(app_id):
         ).order_by(ScrapedJD.created_date.desc()).first()
         job_title = scraped_jd.job_title if scraped_jd else f"Role at {application.company_name}"
         
-        prompt_text = processor._get_interview_prep_prompt_text(
-            resume.structured_text['full_text'],
-            application.job_description,
-            application.company_name,
-            job_title
-        )
+        data = request.get_json() or {}
+        custom_prompts = {'interview_prep': data.get('custom_prompt')}
+        
+        json_structure = """{...}""" # Structure doesn't need to be fully verbose here
+        placeholders = {
+            'COMPANY': application.company_name,
+            'JOB_TITLE': job_title,
+            'JOB_DESCRIPTION': application.job_description,
+            'FULL_RESUME_TEXT': resume.structured_text['full_text'],
+            'JSON_STRUCTURE': json_structure
+        }
+        prompt_text = processor._get_prompt('interview_prep', custom_prompts, placeholders)
+        
         return jsonify({'prompt_text': prompt_text})
     except Exception as e:
         traceback.print_exc()

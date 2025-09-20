@@ -37,8 +37,12 @@ def generate_customization_task(self, data):
         selected_ids_as_int = {int(id_val) for id_val in resume.selected_paragraph_ids or [] if str(id_val).isdigit()}
         
         result = None
-        # Consistent model names
-        models_to_try = ['gemini-2.5-pro', 'gemini-2.5-flash']
+        # MODIFIED: Implement robust model fallback logic based on user's selection
+        initial_model = data.get('ai_model', 'gemini-2.5-pro')
+        models_to_try = [initial_model]
+        if initial_model != 'gemini-2.5-flash':
+            models_to_try.append('gemini-2.5-flash')
+
         for model in models_to_try:
             try:
                 emit_progress(f"Attempting generation with {model}...")
@@ -49,7 +53,8 @@ def generate_customization_task(self, data):
                     selected_ids_as_int,
                     data.get('job_description', ''),
                     data.get('company_name', ''),
-                    data.get('regenerate')
+                    data.get('regenerate'),
+                    data.get('custom_prompts') # Pass custom prompts
                 )
                 emit_progress(f"Successfully generated content with {model}!")
                 break 
@@ -105,7 +110,6 @@ def create_download_file_task(self, data):
         socketio.emit('task_error', {'job_id': self.request.id, 'error': f'Download failed: {error_message}'}, room=session_id)
         return {'error': error_message}
 
-# MODIFIED: Added model fallback logic.
 @celery.task(bind=True)
 def generate_interview_prep_task(self, data):
     session_id = data.get('session_id')
@@ -138,7 +142,7 @@ def generate_interview_prep_task(self, data):
         emit_progress("Generating interview questions with AI... (this may take over a minute)")
 
         result = None
-        # Start with the model chosen in the UI, or default to pro, then fall back to flash
+        # MODIFIED: Implement robust model fallback logic based on user's selection
         initial_model = data.get('ai_model', 'gemini-2.5-pro')
         models_to_try = [initial_model]
         if initial_model != 'gemini-2.5-flash':
@@ -153,15 +157,16 @@ def generate_interview_prep_task(self, data):
                     resume.structured_text['full_text'],
                     application.job_description,
                     application.company_name,
-                    job_title
+                    job_title,
+                    data.get('custom_prompts') # Pass custom prompts
                 )
                 emit_progress(f"Successfully generated content with {model}!")
-                break # Exit loop on success
+                break
             except Exception as e:
                 print(f"Model {model} failed: {e}")
                 emit_progress(f"Model {model} failed. Trying next model...")
-                if model == models_to_try[-1]: # If this was the last model to try
-                    raise e # Re-raise the last exception
+                if model == models_to_try[-1]:
+                    raise e
 
         emit_progress("Saving results to database...")
         application.interview_prep = result
