@@ -17,10 +17,39 @@ function scrapeLinkedInPage() {
     if (!descriptionEl) missing.push('description');
     if (missing.length) return { error: `Missing elements: ${missing.join(', ')}. Try manual selection.` };
 
+    // Check for Easy Apply vs Normal Apply
+    let application_type = 'Normal'; // Default
+
+    // Try multiple selectors for LinkedIn apply buttons
+    const applyButtons = document.querySelectorAll('span.artdeco-button__text, button[aria-label*="apply" i], button[data-test-id*="apply" i], a[data-test-id*="apply" i]');
+
+    for (const button of applyButtons) {
+      const buttonText = button.textContent.trim();
+      const ariaLabel = button.getAttribute('aria-label') || '';
+      const dataTestId = button.getAttribute('data-test-id') || '';
+
+      console.log('LinkedIn Apply Button Debug:', {
+        text: buttonText,
+        ariaLabel: ariaLabel,
+        dataTestId: dataTestId
+      });
+
+      // Check for Easy Apply in various forms
+      if (buttonText.toLowerCase().includes('easy apply') ||
+          ariaLabel.toLowerCase().includes('easy apply') ||
+          dataTestId.toLowerCase().includes('easy apply') ||
+          buttonText.toLowerCase().includes('easy') && buttonText.toLowerCase().includes('apply')) {
+        application_type = 'Easy Apply';
+        console.log('Detected Easy Apply button');
+        break;
+      }
+    }
+
     return {
       job_title: titleEl.innerText.trim(),
       company_name: companyEl.innerText.trim(),
       job_description: descriptionEl.innerText.trim(),
+      application_type: application_type,
       page_url: window.location.href,
     };
   } catch (e) {

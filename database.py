@@ -84,6 +84,7 @@ class ScrapedJD(db.Model):
     company_name = db.Column(db.String(150), nullable=False)
     job_description = db.Column(db.Text, nullable=True)
     page_url = db.Column(db.String(500), nullable=False)
+    application_type = db.Column(db.String(50), default='Normal')  # 'Normal' or 'Easy Apply'
     created_date = db.Column(db.DateTime, default=datetime.utcnow)
     user_session_id = db.Column(db.String(100), nullable=False)
     status = db.Column(db.String(50), default='active')  # 'active' or 'generated'
@@ -95,6 +96,7 @@ class ScrapedJD(db.Model):
             'company_name': self.company_name,
             'job_description': self.job_description,
             'page_url': self.page_url,
+            'application_type': self.application_type,
             'created_date': self.created_date.isoformat(),
             'user_session_id': self.user_session_id,
             'status': self.status,

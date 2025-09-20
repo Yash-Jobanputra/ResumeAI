@@ -751,12 +751,13 @@ def add_scraped_jd():
     user_session_id = data.get('user_session_id')
     if not user_session_id:
         return jsonify({'error': 'user_session_id is required'}), 400
-    
+
     new_jd = ScrapedJD(
         job_title=data.get('job_title', 'N/A'),
         company_name=data.get('company_name', 'N/A'),
         job_description=data.get('job_description', ''),
         page_url=data.get('page_url', ''),
+        application_type=data.get('application_type', 'Normal'),  # New field
         user_session_id=user_session_id
     )
     db.session.add(new_jd)
