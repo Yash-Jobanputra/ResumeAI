@@ -331,13 +331,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             type: 'info'
           }).catch(() => {});
 
-          // Execute the scraper function
-          chrome.scripting.executeScript({
-            target: { tabId: tabId },
-            function: scraperFunc,
-          }, (injectionResults) => {
+          // Send scraper function to content script to execute
+          chrome.tabs.sendMessage(tabId, {
+            action: 'executeScraper',
+            scraperName: scraperFunc.name,
+            hostname: hostname
+          }, (response) => {
             if (chrome.runtime.lastError) {
-              console.error('ResumeAI Background: Error executing scraper', chrome.runtime.lastError);
+              console.error('ResumeAI Background: Error sending scraper to content script', chrome.runtime.lastError);
               chrome.tabs.sendMessage(tabId, {
                 action: 'showCompletionMessage',
                 message: `❌ Error: ${chrome.runtime.lastError.message}`,
@@ -346,71 +347,80 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               return;
             }
 
-            const result = injectionResults[0].result;
-            if (result && !result.error) {
-              // Send to API
-              chrome.storage.local.get(['sessionId'], (storageResult) => {
-                const sessionId = storageResult.sessionId?.trim();
+            if (response && response.result) {
+              const result = response.result;
 
-                if (!sessionId) {
-                  chrome.tabs.sendMessage(tabId, {
-                    action: 'showCompletionMessage',
-                    message: '❌ Error: Session ID required. Set it in the extension popup.',
-                    type: 'error'
-                  }).catch(() => {});
-                  return;
-                }
+              if (result && !result.error) {
+                // Send to API
+                chrome.storage.local.get(['sessionId'], (storageResult) => {
+                  const sessionId = storageResult.sessionId?.trim();
 
-                const dataToSend = {
-                  ...result,
-                  user_session_id: sessionId
-                };
-
-                fetch(API_ENDPOINT, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(dataToSend),
-                })
-                .then(response => {
-                  if (!response.ok) {
-                    return response.json().then(errorData => {
-                      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-                    });
+                  if (!sessionId) {
+                    chrome.tabs.sendMessage(tabId, {
+                      action: 'showCompletionMessage',
+                      message: '❌ Error: Session ID required. Set it in the extension popup.',
+                      type: 'error'
+                    }).catch(() => {});
+                    return;
                   }
-                  return response;
-                })
-                .then(() => {
-                  console.log('ResumeAI Background: Auto selection successful');
-                  chrome.tabs.sendMessage(tabId, {
-                    action: 'showCompletionMessage',
-                    message: '✅ Job data successfully sent to app!',
-                    type: 'success'
-                  }).catch(() => {});
 
-                  chrome.storage.local.set({
-                    lastStatus: '✅ Successfully sent to app!',
-                    lastStatusType: 'success'
-                  });
-                })
-                .catch(error => {
-                  console.error('ResumeAI Background: Auto selection API error:', error);
-                  chrome.tabs.sendMessage(tabId, {
-                    action: 'showCompletionMessage',
-                    message: `❌ Error: ${error.message}`,
-                    type: 'error'
-                  }).catch(() => {});
+                  const dataToSend = {
+                    ...result,
+                    user_session_id: sessionId
+                  };
 
-                  chrome.storage.local.set({
-                    lastStatus: `❌ Error: ${error.message}`,
-                    lastStatusType: 'error'
+                  fetch(API_ENDPOINT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(dataToSend),
+                  })
+                  .then(response => {
+                    if (!response.ok) {
+                      return response.json().then(errorData => {
+                        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+                      });
+                    }
+                    return response;
+                  })
+                  .then(() => {
+                    console.log('ResumeAI Background: Auto selection successful');
+                    chrome.tabs.sendMessage(tabId, {
+                      action: 'showCompletionMessage',
+                      message: '✅ Job data successfully sent to app!',
+                      type: 'success'
+                    }).catch(() => {});
+
+                    chrome.storage.local.set({
+                      lastStatus: '✅ Successfully sent to app!',
+                      lastStatusType: 'success'
+                    });
+                  })
+                  .catch(error => {
+                    console.error('ResumeAI Background: Auto selection API error:', error);
+                    chrome.tabs.sendMessage(tabId, {
+                      action: 'showCompletionMessage',
+                      message: `❌ Error: ${error.message}`,
+                      type: 'error'
+                    }).catch(() => {});
+
+                    chrome.storage.local.set({
+                      lastStatus: `❌ Error: ${error.message}`,
+                      lastStatusType: 'error'
+                    });
                   });
                 });
-              });
+              } else {
+                const errorMessage = result?.error || 'Could not auto-parse page';
+                chrome.tabs.sendMessage(tabId, {
+                  action: 'showCompletionMessage',
+                  message: `❌ ${errorMessage}`,
+                  type: 'error'
+                }).catch(() => {});
+              }
             } else {
-              const errorMessage = result?.error || 'Could not auto-parse page';
               chrome.tabs.sendMessage(tabId, {
                 action: 'showCompletionMessage',
-                message: `❌ ${errorMessage}`,
+                message: '❌ Error: Could not execute scraper on this page',
                 type: 'error'
               }).catch(() => {});
             }

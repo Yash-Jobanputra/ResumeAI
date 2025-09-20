@@ -6,7 +6,11 @@
     "storage",
     "activeTab",
     "scripting",
-    "tabs"
+    "tabs",
+    "https://*.linkedin.com/*",
+    "https://*.indeed.com/*",
+    "https://*.hiring.cafe/*",
+    "https://*.harri.com/*"
   ],
   "action": {
     "default_popup": "popup.html",

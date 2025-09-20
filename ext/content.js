@@ -47,6 +47,127 @@ function injectStyles() {
   document.head.appendChild(style);
 }
 
+// Scraper functions for content script execution
+function scrapeLinkedInPage() {
+  // LinkedIn-specific scraper (keeps original selectors)
+  try {
+    const titleEl = document.querySelector('.job-details-jobs-unified-top-card__job-title h1 a, .jobs-unified-top-card__job-title h1 a');
+    const companyEl = document.querySelector('.job-details-jobs-unified-top-card__company-name a, .jobs-unified-top-card__company-name a');
+    const descriptionEl = document.querySelector('#job-details, .jobs-description-content__text');
+
+    const missing = [];
+    if (!titleEl) missing.push('title');
+    if (!companyEl) missing.push('company');
+    if (!descriptionEl) missing.push('description');
+    if (missing.length) return { error: `Missing elements: ${missing.join(', ')}. Try manual selection.` };
+
+    return {
+      job_title: titleEl.innerText.trim(),
+      company_name: companyEl.innerText.trim(),
+      job_description: descriptionEl.innerText.trim(),
+      page_url: window.location.href,
+    };
+  } catch (e) {
+    return { error: e.toString() };
+  }
+}
+
+function scrapeIndeedPage() {
+  // Indeed scraper: cleans up title and restricts JD to main section
+  try {
+    // Title: try both selectors, fallback to first found
+    let titleEl = document.querySelector('h2[data-testid="jobsearch-JobInfoHeader-title"]');
+    if (!titleEl) titleEl = document.querySelector('.jobsearch-JobInfoHeader-title');
+    // Company: try both selectors
+    let companyEl = document.querySelector('[data-company-name]');
+    if (!companyEl) companyEl = document.querySelector('[data-testid="inlineHeader-companyName"]');
+    if (!companyEl) companyEl = document.querySelector('.icl-u-lg-mr--sm');
+    // JD: only use #jobDescriptionText
+    const descriptionEl = document.querySelector('#jobDescriptionText');
+
+    const missing = [];
+    if (!titleEl) missing.push('title');
+    if (!companyEl) missing.push('company');
+    if (!descriptionEl) missing.push('description');
+    if (missing.length) return { error: `Missing elements: ${missing.join(', ')}. Try manual selection.` };
+
+    // Clean up title: remove trailing ' - job post' if present
+    let jobTitle = titleEl.innerText.trim();
+    jobTitle = jobTitle.replace(/\s*-\s*job post$/i, '').trim();
+
+    return {
+      job_title: jobTitle,
+      company_name: companyEl.innerText.trim(),
+      job_description: descriptionEl.innerText.trim(),
+      page_url: window.location.href,
+    };
+  } catch (e) {
+    return { error: e.toString() };
+  }
+}
+
+function scrapeHiringCafePage() {
+  // HiringCafe scraper: use only valid selectors and try fallbacks
+  try {
+    // Title: try h2.font-extrabold first
+    let titleEl = document.querySelector('h2.font-extrabold');
+    if (!titleEl) titleEl = document.querySelector('.font-extrabold.text-3xl');
+
+    // Company: try span.text-xl.font-semibold first
+    let companyEl = document.querySelector('span.text-xl.font-semibold');
+    if (!companyEl) companyEl = document.querySelector('span.font-semibold');
+
+    // JD: try article.prose, fallback to .prose
+    let descriptionEl = document.querySelector('article.prose');
+    if (!descriptionEl) descriptionEl = document.querySelector('.prose');
+
+    const missing = [];
+    if (!titleEl) missing.push('title');
+    if (!companyEl) missing.push('company');
+    if (!descriptionEl) missing.push('description');
+    if (missing.length) return { error: `Missing elements: ${missing.join(', ')}. Try manual selection.` };
+
+    return {
+      job_title: titleEl.innerText.trim(),
+      company_name: companyEl.innerText.trim().replace(/^@\s*/, ''),
+      job_description: descriptionEl.innerText.trim(),
+      page_url: window.location.href,
+    };
+  } catch (e) {
+    return { error: e.toString() };
+  }
+}
+
+function scrapeHarriPage() {
+  try {
+    // Role
+    const titleEl = document.querySelector('.position-name');
+    // Company
+    const companyEl = document.querySelector('.content[automation="jobLocation"] span');
+    // JD
+    const descriptionEl = document.querySelector('#job_description');
+
+    const missing = [];
+    if (!titleEl) missing.push('title');
+    if (!companyEl) missing.push('company');
+    if (!descriptionEl) missing.push('description');
+    if (missing.length) return { error: `Missing elements: ${missing.join(', ')}. Try manual selection.` };
+
+    // Remove "Description" header if present
+    let jdText = descriptionEl.innerText.trim();
+    jdText = jdText.replace(/^Description\s*\n?/i, '').trim();
+
+    return {
+      job_title: titleEl.innerText.trim(),
+      company_name: companyEl.innerText.trim(),
+      job_description: jdText,
+      page_url: window.location.href,
+    };
+  } catch (e) {
+    return { error: e.toString() };
+  }
+}
+
 function createPrompt() {
   let promptDiv = document.getElementById('resume-ai-prompt');
   if (!promptDiv) {
@@ -309,6 +430,31 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   } else if (request.action === 'showCompletionMessage') {
     showCompletionMessage(request.message, request.type);
     sendResponse({ status: 'shown' });
+  } else if (request.action === 'executeScraper') {
+    // Execute scraper function sent from background script
+    console.log('Content Script: Executing scraper', request.scraperName);
+
+    let result = null;
+    try {
+      // Execute the appropriate scraper function based on hostname
+      if (request.hostname.includes('linkedin.com')) {
+        result = scrapeLinkedInPage();
+      } else if (request.hostname.includes('indeed.com')) {
+        result = scrapeIndeedPage();
+      } else if (request.hostname.includes('hiringcafe') || request.hostname.includes('hiring.cafe') || request.hostname.includes('hiring-cafe')) {
+        result = scrapeHiringCafePage();
+      } else if (request.hostname.includes('harri.com')) {
+        result = scrapeHarriPage();
+      } else {
+        result = { error: 'Unsupported site for auto scraping' };
+      }
+    } catch (error) {
+      result = { error: error.toString() };
+    }
+
+    console.log('Content Script: Scraper result', result);
+    sendResponse({ result: result });
+    return true;
   }
   return true;
 });
