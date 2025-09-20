@@ -19,15 +19,15 @@
         }
         @keyframes slideInRight { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
         @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; visibility: hidden; } }
+        .placeholder-pill { cursor: grab; }
+        .placeholder-pill:active { cursor: grabbing; }
     </style>
 </head>
 <body class="bg-gray-100 min-h-screen font-sans" x-data="resumeApp()" x-cloak>
 
-    <!-- Global Components -->
     <div x-show="isLoading" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50">
         <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-white"></div>
     </div>
-    <!-- Toasts / Notifications -->
     <div class="fixed top-5 right-5 z-50 space-y-3">
         <template x-for="toast in toasts" :key="toast.id">
             <div class="toast p-4 rounded-md shadow-lg text-white" :class="{ 'bg-red-500': toast.type === 'error', 'bg-green-500': toast.type === 'success', 'bg-blue-500': toast.type === 'info' }">
@@ -35,7 +35,6 @@
             </div>
         </template>
     </div>
-    <!-- Delete Modal -->
     <div x-show="showDeleteModal" class="fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center z-40 fade-in">
         <div class="bg-white rounded-lg shadow-xl p-8 max-w-md w-full">
             <h2 class="text-2xl font-semibold mb-4" x-text="deleteContext === 'resume' ? 'Delete Resume' : (deleteContext === 'application' ? 'Delete Application' : 'Delete Scraped JD')"></h2>
@@ -46,7 +45,6 @@
             </div>
         </div>
     </div>
-    <!-- Resume Selection Modal -->
     <div x-show="showResumeSelectionModal" class="fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center z-40 fade-in">
         <div class="bg-white rounded-lg shadow-xl p-8 max-w-lg w-full">
             <h2 class="text-2xl font-semibold mb-4">Select a Resume to Use</h2>
@@ -63,9 +61,50 @@
             </div>
         </div>
     </div>
+
+    <div x-show="showSettingsModal" class="fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center z-40 fade-in">
+        <div class="bg-white rounded-lg shadow-xl p-8 max-w-4xl w-full h-[90vh] flex flex-col">
+            <div class="flex justify-between items-center border-b pb-4 mb-4">
+                <h2 class="text-2xl font-semibold">Customize AI Prompts</h2>
+                <button @click="showSettingsModal = false" class="text-gray-500 hover:text-gray-800">&times;</button>
+            </div>
+            
+            <div class="flex-grow flex flex-col overflow-hidden">
+                <div class="border-b border-gray-200">
+                    <nav class="-mb-px flex space-x-6" aria-label="Tabs">
+                        <button @click="activeSettingsTab = 'paragraphs'" :class="activeSettingsTab === 'paragraphs' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'" class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">Paragraphs</button>
+                        <button @click="activeSettingsTab = 'cover_letter'" :class="activeSettingsTab === 'cover_letter' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'" class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">Cover Letter</button>
+                        <button @click="activeSettingsTab = 'interview_prep'" :class="activeSettingsTab === 'interview_prep' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'" class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">Interview Prep</button>
+                    </nav>
+                </div>
+                
+                <div class="flex-grow mt-4 overflow-y-auto pr-2">
+                    <template x-for="(promptData, key) in customPrompts" :key="key">
+                        <div x-show="activeSettingsTab === key">
+                            <h3 class="text-lg font-medium text-gray-700 mb-2">Available Placeholders</h3>
+                            <p class="text-xs text-gray-500 mb-3">Drag these placeholders and drop them into the text area below.</p>
+                            <div class="flex flex-wrap gap-2 mb-4 p-3 bg-gray-50 rounded-lg border">
+                                <template x-for="placeholder in promptPlaceholders[key]" :key="placeholder">
+                                    <span class="placeholder-pill bg-blue-100 text-blue-800 text-xs font-mono px-2 py-1 rounded" draggable="true" x-text="placeholder" @dragstart="event.dataTransfer.setData('text/plain', placeholder)"></span>
+                                </template>
+                            </div>
+                            <textarea x-ref="`${key}Textarea`" x-model="customPrompts[key]" rows="18" class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 font-mono text-sm" @drop.prevent="handleDrop(event, key)" @dragover.prevent></textarea>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <div class="mt-6 flex justify-between items-center pt-4 border-t">
+                 <button @click="resetPrompts()" class="text-sm text-gray-600 hover:text-red-600">Reset All to Defaults</button>
+                <div class="flex space-x-4">
+                    <button @click="showSettingsModal = false" class="bg-gray-300 text-gray-800 px-6 py-2 rounded-lg hover:bg-gray-400">Cancel</button>
+                    <button @click="savePrompts()" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700">Save Prompts</button>
+                </div>
+            </div>
+        </div>
+    </div>
     
     <div class="container mx-auto px-4 py-8">
-        <!-- Header -->
         <div class="text-center mb-6">
             <h1 class="text-5xl font-bold text-gray-800 mb-2">Resume AI</h1>
             <p class="text-gray-600 text-lg">Your Personal Resume & Application Hub</p>
@@ -74,20 +113,20 @@
             </div>
         </div>
 
-        <!-- Main Navigation -->
         <div class="mb-8 bg-white rounded-lg shadow-sm p-2 max-w-xl mx-auto" x-show="view !== 'nameEntry' && view !== 'paragraphSelection'">
              <nav class="flex justify-center space-x-2 sm:space-x-4">
                 <button @click="navigateTo('dashboard')" class="px-3 py-2 text-sm font-medium border-b-2 transition" :class="mainView === 'dashboard' ? 'nav-active' : 'nav-inactive'">My Resumes</button>
                 <button @click="navigateTo('scrapedJDs')" class="px-3 py-2 text-sm font-medium border-b-2 transition" :class="mainView === 'scrapedJDs' ? 'nav-active' : 'nav-inactive'">Scraped JDs</button>
                 <button @click="navigateTo('resultsHub')" class="px-3 py-2 text-sm font-medium border-b-2 transition" :class="mainView === 'resultsHub' ? 'nav-active' : 'nav-inactive'">AI Results Hub</button>
                 <button @click="navigateTo('applications')" class="px-3 py-2 text-sm font-medium border-b-2 transition" :class="mainView === 'applications' ? 'nav-active' : 'nav-inactive'">My Applications</button>
-            </nav>
+                <button @click="showSettingsModal = true" title="Settings" class="p-2 text-gray-500 hover:text-blue-600 transition">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" /></svg>
+                </button>
+             </nav>
         </div>
 
-        <!-- VIEWS -->
         <div x-show="view !== 'nameEntry' && view !== 'paragraphSelection'">
 
-            <!-- Step 1: Main Hub / Dashboard -->
             <div x-show="mainView === 'dashboard' && view === 'dashboard'" class="fade-in space-y-10">
                 <div class="bg-white rounded-lg shadow-lg p-6">
                     <h2 class="text-2xl font-semibold mb-4 border-b pb-3">Upload a New Resume</h2>
@@ -124,7 +163,6 @@
                 </div>
             </div>
 
-            <!-- Scraped JDs Hub -->
             <div x-show="mainView === 'scrapedJDs'" class="fade-in bg-white rounded-lg shadow-lg p-6">
                  <h2 class="text-2xl font-semibold mb-4">Scraped Job Descriptions</h2>
                  <p class="text-gray-600 mb-6 text-sm">Use the browser extension on a job posting page to send jobs here.</p>
@@ -149,8 +187,7 @@
                  </div>
             </div>
 
-             <!-- AI Results Hub -->
-            <div x-show="mainView === 'resultsHub'" class="fade-in bg-white rounded-lg shadow-lg p-6">
+             <div x-show="mainView === 'resultsHub'" class="fade-in bg-white rounded-lg shadow-lg p-6">
                  <h2 class="text-2xl font-semibold mb-4">AI Results Hub</h2>
                  <div x-show="completedJobs.length === 0 && activeJobs.length === 0" class="text-center p-8"><p class="text-gray-500">No AI jobs run yet. Customize a resume to see results here.</p></div>
                  <div x-show="completedJobs.length > 0 || activeJobs.length > 0" class="overflow-x-auto">
@@ -164,8 +201,7 @@
                             </tr>
                         </thead>
                         <tbody class="bg-white divide-y divide-gray-200">
-                            <!-- Active Jobs -->
-                            <template x-for="job in activeJobs" :key="job.id">
+                            <template x-for="job in activeJobs.filter(j => j.type !== 'interview_prep')" :key="job.id">
                                  <tr class="bg-blue-50">
                                     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900" x-text="job.company_name"></td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm">
@@ -178,7 +214,6 @@
                                     <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium"></td>
                                  </tr>
                             </template>
-                            <!-- Completed Jobs -->
                             <template x-for="job in completedJobs" :key="job.id">
                                 <tr class="hover:bg-gray-50">
                                     <td @click="viewResults(job.id)" class="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600 hover:text-blue-800 cursor-pointer" x-text="job.company_name"></td>
@@ -194,7 +229,6 @@
                  </div>
             </div>
 
-            <!-- Applications Dashboard -->
             <div x-show="mainView === 'applications'" class="fade-in bg-white rounded-lg shadow-lg p-6">
                  <h2 class="text-2xl font-semibold mb-4">My Applications</h2>
                  <div x-show="applications.length === 0" class="text-center p-8"><p class="text-gray-500">No applications saved yet.</p></div>
@@ -235,17 +269,13 @@
             </div>
         </div>
 
-        <!-- FULL PAGE RESULTS VIEW -->
         <div x-show="view === 'results'" class="fade-in">
              <div class="bg-white rounded-lg shadow-lg p-6">
-                <!-- Header -->
                 <div class="border-b pb-4 mb-6">
                     <h2 class="text-3xl font-bold mb-1">AI Customization Results</h2>
                     <p class="text-gray-600">Review and finalize the results for your application to <strong x-text="activeResult.company_name"></strong>.</p>
                 </div>
-                <!-- Two-Column Layout -->
                 <div class="grid md:grid-cols-2 gap-8">
-                    <!-- Left Column: Paragraphs -->
                     <div class="flex flex-col">
                         <h3 class="text-xl font-semibold mb-4">Enhanced Paragraphs</h3>
                         <div class="space-y-4 flex-grow overflow-y-auto pr-4 border rounded-lg p-4 bg-gray-50 min-h-[50vh]">
@@ -266,7 +296,6 @@
                             </template>
                         </div>
                     </div>
-                    <!-- Right Column: Cover Letter & Score -->
                     <div class="flex flex-col">
                         <div class="flex justify-between items-center mb-4">
                              <h3 class="text-xl font-semibold">Generated Cover Letter</h3>
@@ -290,13 +319,11 @@
                         </div>
                     </div>
                 </div>
-                <!-- Regeneration Actions -->
                 <div class="flex space-x-4 my-6">
                     <button @click="runCustomization({ result_id: activeResult.id, regenerate: 'paragraphs' })" class="text-sm bg-gray-200 text-gray-800 px-4 py-2 rounded-md hover:bg-gray-300">🔄 Regenerate All Paragraphs</button>
                     <button @click="runCustomization({ result_id: activeResult.id, regenerate: 'cover_letter' })" class="text-sm bg-gray-200 text-gray-800 px-4 py-2 rounded-md hover:bg-gray-300">🔄 Regenerate Cover Letter</button>
                 </div>
 
-                <!-- Actions Footer -->
                 <div class="mt-8 pt-6 border-t flex flex-wrap gap-4 justify-between items-center">
                     <button @click="navigateTo('resultsHub')" class="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600">Back to Results Hub</button>
                     <div class="flex space-x-4">
@@ -307,10 +334,8 @@
              </div>
         </div>
 
-        <!-- FULL PAGE APPLICATION DETAIL VIEW -->
         <div x-show="view === 'applicationDetail'" class="fade-in">
              <div class="bg-white rounded-lg shadow-lg p-6">
-                <!-- Header -->
                 <div class="border-b pb-4 mb-6 flex justify-between items-center">
                     <div>
                         <h2 class="text-3xl font-bold mb-1" x-text="activeApplication.company_name"></h2>
@@ -318,16 +343,13 @@
                     </div>
                     <button @click="navigateTo('applications')" class="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600">Back to Applications</button>
                 </div>
-                <!-- Two-Column Layout -->
                 <div class="grid md:grid-cols-2 gap-8">
-                    <!-- Left Column: Job Description -->
                     <div class="flex flex-col">
                         <h3 class="text-xl font-semibold mb-4">Job Description</h3>
                         <div class="space-y-4 flex-grow overflow-y-auto pr-4 border rounded-lg p-4 bg-gray-50 min-h-[50vh]">
                             <p class="whitespace-pre-wrap" x-text="activeApplication.job_description"></p>
                         </div>
                     </div>
-                    <!-- Right Column: Cover Letter & Score -->
                     <div class="flex flex-col">
                         <div class="flex justify-between items-center mb-4">
                              <h3 class="text-xl font-semibold">Saved Cover Letter</h3>
@@ -352,15 +374,109 @@
                     </div>
                 </div>
 
-                 <!-- Placeholder for future features -->
-                 <div class="mt-8 pt-6 border-t">
-                    <h3 class="text-xl font-semibold mb-4">Interview Preparation</h3>
-                     <div class="bg-gray-100 p-6 rounded-lg text-center">
-                        <p class="text-gray-500">Interview question generation will be available here soon.</p>
+                <div class="mt-8 pt-6 border-t">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-xl font-semibold">Interview Preparation</h3>
+                        <div x-show="activeApplication.interview_prep" class="flex items-center space-x-3">
+                             <button @click="copyInterviewPrompt(activeApplication.id)" class="text-sm bg-gray-200 text-gray-700 px-3 py-1 rounded-md hover:bg-gray-300">📋 Copy Prompt</button>
+                             <button @click="generateInterviewPrep(activeApplication.id)" class="text-sm bg-blue-100 text-blue-800 px-3 py-1 rounded-md hover:bg-blue-200">🔄 Regenerate</button>
+                        </div>
+                    </div>
+
+                    <div x-show="isJobActive('interview_prep', activeApplication.id)" class="bg-blue-50 p-6 rounded-lg text-center">
+                        <div class="flex items-center justify-center space-x-3">
+                            <div class="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
+                            <p class="text-blue-700">Generating questions... this may take a moment.</p>
+                        </div>
+                    </div>
+
+                    <div x-show="!activeApplication.interview_prep && !isJobActive('interview_prep', activeApplication.id)" class="bg-gray-100 p-6 rounded-lg text-center">
+                        <p class="text-gray-600 mb-4">Generate AI-powered, personalized interview questions based on your resume and the job description.</p>
+                        <button @click="generateInterviewPrep(activeApplication.id)" class="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 font-semibold">✨ Generate Questions</button>
+                    </div>
+
+                    <div x-show="activeApplication.interview_prep" class="space-y-8">
+                        <template x-if="activeApplication.interview_prep">
+                            <div>
+                                <template x-if="activeApplication.interview_prep.general_questions && activeApplication.interview_prep.general_questions.length > 0">
+                                    <div class="mb-6">
+                                        <h4 class="text-lg font-semibold mb-3 text-gray-800 border-b pb-2">General Questions</h4>
+                                        <div class="space-y-3">
+                                            <template x-for="(q, index) in activeApplication.interview_prep.general_questions" :key="'gen-' + index">
+                                                <div class="border rounded-lg p-4 bg-white">
+                                                    <div @click="q.showAnswer = !q.showAnswer" class="flex justify-between items-center cursor-pointer">
+                                                        <p class="font-medium text-gray-800" x-text="q.question"></p>
+                                                        <span class="text-blue-500" x-text="q.showAnswer ? '−' : '+'" ></span>
+                                                    </div>
+                                                    <div x-show="q.showAnswer" x-collapse.duration.300ms class="mt-3 pt-3 border-t">
+                                                        <h5 class="text-sm font-semibold text-gray-600">Talking Points:</h5>
+                                                        <ul class="list-disc list-inside text-sm text-gray-600 space-y-1 my-2 pl-2">
+                                                            <template x-for="point in q.talking_points" :key="point">
+                                                                <li x-text="point"></li>
+                                                            </template>
+                                                        </ul>
+                                                        <h5 class="text-sm font-semibold text-gray-600 mt-3">Sample Answer:</h5>
+                                                        <p class="text-sm text-gray-700 mt-1 bg-gray-50 p-3 rounded" x-text="q.answer"></p>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
+                                <template x-if="activeApplication.interview_prep.role_based_questions && activeApplication.interview_prep.role_based_questions.length > 0">
+                                    <div class="mb-6">
+                                        <h4 class="text-lg font-semibold mb-3 text-gray-800 border-b pb-2">Role-Based Questions</h4>
+                                        <div class="space-y-3">
+                                            <template x-for="(q, index) in activeApplication.interview_prep.role_based_questions" :key="'role-' + index">
+                                                <div class="border rounded-lg p-4 bg-white">
+                                                    <div @click="q.showAnswer = !q.showAnswer" class="flex justify-between items-center cursor-pointer">
+                                                        <p class="font-medium text-gray-800" x-text="q.question"></p>
+                                                        <span class="text-blue-500" x-text="q.showAnswer ? '−' : '+'" ></span>
+                                                    </div>
+                                                    <div x-show="q.showAnswer" x-collapse.duration.300ms class="mt-3 pt-3 border-t">
+                                                        <h5 class="text-sm font-semibold text-gray-600">Talking Points:</h5>
+                                                        <ul class="list-disc list-inside text-sm text-gray-600 space-y-1 my-2 pl-2">
+                                                            <template x-for="point in q.talking_points" :key="point">
+                                                                <li x-text="point"></li>
+                                                            </template>
+                                                        </ul>
+                                                        <h5 class="text-sm font-semibold text-gray-600 mt-3">Sample Answer:</h5>
+                                                        <p class="text-sm text-gray-700 mt-1 bg-gray-50 p-3 rounded" x-text="q.answer"></p>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
+                                <template x-if="activeApplication.interview_prep.behavioral_questions && activeApplication.interview_prep.behavioral_questions.length > 0">
+                                    <div class="mb-6">
+                                        <h4 class="text-lg font-semibold mb-3 text-gray-800 border-b pb-2">Behavioral Questions</h4>
+                                        <div class="space-y-3">
+                                            <template x-for="(q, index) in activeApplication.interview_prep.behavioral_questions" :key="'behav-' + index">
+                                                <div class="border rounded-lg p-4 bg-white">
+                                                    <div @click="q.showAnswer = !q.showAnswer" class="flex justify-between items-center cursor-pointer">
+                                                        <p class="font-medium text-gray-800" x-text="q.question"></p>
+                                                        <span class="text-blue-500" x-text="q.showAnswer ? '−' : '+'" ></span>
+                                                    </div>
+                                                    <div x-show="q.showAnswer" x-collapse.duration.300ms class="mt-3 pt-3 border-t">
+                                                        <h5 class="text-sm font-semibold text-gray-600">Talking Points:</h5>
+                                                        <ul class="list-disc list-inside text-sm text-gray-600 space-y-1 my-2 pl-2">
+                                                            <template x-for="point in q.talking_points" :key="point">
+                                                                <li x-text="point"></li>
+                                                            </template>
+                                                        </ul>
+                                                        <h5 class="text-sm font-semibold text-gray-600 mt-3">Sample Answer:</h5>
+                                                        <p class="text-sm text-gray-700 mt-1 bg-gray-50 p-3 rounded" x-text="q.answer"></p>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
                     </div>
                 </div>
-
-                <!-- Actions Footer -->
                 <div class="mt-8 pt-6 border-t flex flex-wrap gap-4 justify-end items-center">
                     <button @click="downloadCustomizedResume(activeApplication)" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 font-semibold">📄 Download Saved Resume</button>
                 </div>
@@ -368,7 +484,6 @@
         </div>
 
 
-        <!-- Step 0: Name Entry Modal -->
         <div x-show="view === 'nameEntry'" class="fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center z-40 fade-in">
             <div class="bg-white rounded-lg shadow-xl p-8 max-w-md w-full">
                 <h2 class="text-2xl font-semibold mb-4">Welcome to Resume AI</h2>
@@ -383,7 +498,6 @@
             </div>
         </div>
 
-        <!-- Step 2: Paragraph Selection -->
         <div x-show="view === 'paragraphSelection'" class="fade-in">
             <div class="bg-white rounded-lg shadow-lg p-6 max-w-4xl mx-auto">
                 <h2 class="text-2xl font-semibold mb-1">Select Content to Customize</h2>
@@ -403,7 +517,6 @@
             </div>
         </div>
 
-        <!-- Step 3: Customization View -->
         <div x-show="view === 'customization'" class="fade-in">
             <div class="bg-white rounded-lg shadow-lg p-8 max-w-3xl mx-auto">
                 <h2 class="text-2xl font-semibold mb-2">Customize Resume</h2>
@@ -412,8 +525,8 @@
                     <input type="text" x-model="companyName" placeholder="Company Name" class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500">
                     <textarea x-model="jobDescription" rows="8" placeholder="Paste the full job description here..." class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500"></textarea>
                     <select x-model="aiModel" class="block w-full px-3 py-2 border border-gray-300 bg-white rounded-md shadow-sm focus:outline-none focus:ring-blue-500">
-                        <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fast & Cost-Effective)</option>
                         <option value="gemini-2.5-pro">Gemini 2.5 Pro (Most Powerful)</option>
+                        <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fast & Cost-Effective)</option>
                     </select>
                 </div>
                 <div class="mt-8 flex justify-between">
@@ -439,8 +552,20 @@
                 deleteContext: '',
                 socket: null,
                 userSessionId: null,
-                showResumeSelectionModal: false, // For new modal
-                jdToUse: null, // For new modal
+                showResumeSelectionModal: false,
+                jdToUse: null,
+                
+                // MODIFIED: Settings Modal State
+                showSettingsModal: false,
+                activeSettingsTab: 'paragraphs',
+                defaultPrompts: {},
+                customPrompts: {},
+                promptPlaceholders: {
+                    paragraphs: ['{COMPANY}', '{JOB_DESCRIPTION}', '{PARAGRAPH_COUNT}', '{SELECTED_PARAGRAPHS_JSON}', '{TOTAL_WORD_LIMIT}', '{JSON_STRUCTURE}'],
+                    single_paragraph: ['{COMPANY}', '{JOB_DESCRIPTION}', '{ORIGINAL_PARAGRAPH}', '{WORD_LIMIT}', '{JSON_STRUCTURE}'],
+                    cover_letter: ['{COMPANY}', '{JOB_DESCRIPTION}', '{FULL_RESUME_TEXT}', '{JSON_STRUCTURE}'],
+                    interview_prep: ['{COMPANY}', '{JOB_TITLE}', '{JOB_DESCRIPTION}', '{FULL_RESUME_TEXT}', '{JSON_STRUCTURE}']
+                },
                 
                 // Job & Result Management
                 activeJobs: [], 
@@ -461,11 +586,11 @@
                 selectedParagraphIds: [],
                 companyName: '',
                 jobDescription: '',
-                aiModel: 'gemini-2.5-flash',
+                aiModel: 'gemini-2.5-pro',
                 scrapedJdIdToCredit: null,
                 
                 // --- INITIALIZATION ---
-                init() { this.checkStatus(); this.loadUserInfoFromLocalStorage(); this.initSocketIO(); },
+                init() { this.defineDefaultPrompts(); this.loadPrompts(); this.checkStatus(); this.loadUserInfoFromLocalStorage(); this.initSocketIO(); },
                 async checkStatus() {
                     this.isLoading = true;
                     try {
@@ -490,9 +615,7 @@
                     this.socket = io();
                     this.socket.on('connect', () => { console.log('Socket.IO connected!'); });
                     
-                    this.socket.on('session_id', (data) => {
-                        this.userSessionId = data.id;
-                    });
+                    this.socket.on('session_id', (data) => { this.userSessionId = data.id; });
 
                     this.socket.on('task_progress', (data) => { this.showToast('info', data.status); });
                     
@@ -535,12 +658,26 @@
 
                     this.socket.on('task_error', (data) => {
                         this.showToast('error', `Task failed: ${data.error}`);
-                        this.activeJobs = this.activeJobs.filter(j => j.id !== data.job_id);
+                        if (data.context && data.context.type === 'interview_prep') {
+                            this.activeJobs = this.activeJobs.filter(j => !(j.type === 'interview_prep' && j.app_id === data.context.app_id));
+                        } else {
+                            this.activeJobs = this.activeJobs.filter(j => j.id !== data.job_id);
+                        }
                     });
 
                     this.socket.on('download_ready', (data) => {
                         this.showToast('success', 'Download ready!');
                         window.location.href = data.download_url;
+                    });
+                    
+                    this.socket.on('interview_prep_ready', (data) => {
+                        this.showToast('success', `Interview prep for application #${data.app_id} is ready!`);
+                        this.activeJobs = this.activeJobs.filter(j => !(j.type === 'interview_prep' && j.app_id === data.app_id));
+                        const appIndex = this.applications.findIndex(a => a.id === data.app_id);
+                        if (appIndex > -1) this.applications[appIndex].interview_prep = data.interview_prep;
+                        if (this.activeApplication && this.activeApplication.id === data.app_id) {
+                            this.activeApplication.interview_prep = this.processInterviewPrepData(data.interview_prep);
+                        }
                     });
                 },
                 async navigateTo(targetView) {
@@ -550,6 +687,104 @@
                     if (targetView === 'applications') await this.getApplications();
                     if (targetView === 'scrapedJDs') await this.getScrapedJDs();
                 },
+
+                // --- PROMPT MANAGEMENT ---
+                defineDefaultPrompts() {
+                    this.defaultPrompts = {
+                        paragraphs: `You are an expert career coach and professional resume writer. Your task is to transform the provided resume paragraphs to be compelling and tailored for the target role. Return a single, valid JSON object.
+CONTEXT:
+- COMPANY: {COMPANY}
+- TARGET JOB DESCRIPTION:
+{JOB_DESCRIPTION}
+
+TASK: TRANSFORM {PARAGRAPH_COUNT} RESUME PARAGRAPHS
+- SELECTED PARAGRAPHS (as a JSON object of id:text):
+{SELECTED_PARAGRAPHS_JSON}
+- GUIDELINES: Inject hard and soft skill keywords from the JD wherever possible. Keep action word repetition low. Restructure sentences for maximum impact and flow. Use strong action verbs, quantify achievements, and align experiences with the target role.
+- CRITICAL: Only enhance what's there. Never fabricate new achievements. The total word count for all transformed paragraphs must not exceed {TOTAL_WORD_LIMIT}.
+
+CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:
+{JSON_STRUCTURE}`,
+                        single_paragraph: `You are an expert career coach and professional resume writer. Your task is to transform the provided resume paragraphs to be compelling and tailored for the target role. Return a single, valid JSON object.
+CONTEXT:
+- COMPANY: {COMPANY}
+- TARGET JOB DESCRIPTION:
+{JOB_DESCRIPTION}
+
+TASK: TRANSFORM A SINGLE PARAGRAPH
+- ORIGINAL PARAGRAPH: "{ORIGINAL_PARAGRAPH}"
+- GUIDELINES: Dramatically improve the paragraph by restructuring sentences for impact, using strong action verbs, quantifying achievements, and integrating keywords from the job description. Maintain a confident, results-oriented tone.
+- CRITICAL: Only enhance what's there. Do not fabricate new achievements. The new paragraph must be a similar length, not exceeding {WORD_LIMIT} words.
+
+CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:
+{JSON_STRUCTURE}`,
+                        cover_letter: `You are an expert career coach. Your task is to write a cover letter and provide a job match score based on the provided context. Return a single, valid JSON object.
+CONTEXT:
+- COMPANY: {COMPANY}
+- TARGET JOB DESCRIPTION:
+{JOB_DESCRIPTION}
+- FULL RESUME TEXT:
+{FULL_RESUME_TEXT}
+
+TASK: WRITE COVER LETTER & PROVIDE MATCH SCORE
+- Write a compelling, professional cover letter (3-4 paragraphs, 250-300 words).
+- Provide a brutally honest job match score (1-100).
+- GUIDELINES: Use a professional tone, show knowledge of the company, and highlight key achievements from the resume. Use plain text only with NO MARKDOWN.
+- Match Score (1–100): 90–100 = exceptional; 80–89 = strong; 70–79 = good; below 70 = moderate to weak.
+
+CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:
+{JSON_STRUCTURE}`,
+                        interview_prep: `You are an expert career coach and interview preparation specialist. Your task is to generate a comprehensive set of interview questions and exemplary answers based on the candidate's resume and the target job description. Return a single, valid JSON object.
+CONTEXT:
+- COMPANY: {COMPANY}
+- TARGET ROLE: {JOB_TITLE}
+- TARGET JOB DESCRIPTION:
+{JOB_DESCRIPTION}
+- CANDIDATE'S FULL RESUME TEXT:
+{FULL_RESUME_TEXT}
+
+TASK: GENERATE INTERVIEW QUESTIONS & ANSWERS
+Generate two distinct categories of questions. For each question, provide both 'talking_points' (a bulleted list of key ideas to convey) and a complete sample 'answer'.
+
+1.  **General Questions (5 questions):** Tailored to the candidate's specific resume. Scrutinize their career path, skills, and experiences (e.g., job gaps, career changes, specific projects).
+2.  **Role-Based Questions (5 questions):** Highly specific to the technical and functional requirements of the job description, framed in the context of the candidate's resume.
+
+CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure. Do not add any text or markdown before or after the JSON object.
+{JSON_STRUCTURE}`
+                    };
+                },
+                loadPrompts() {
+                    const saved = localStorage.getItem('customPrompts');
+                    this.customPrompts = saved ? JSON.parse(saved) : JSON.parse(JSON.stringify(this.defaultPrompts));
+                },
+                savePrompts() {
+                    localStorage.setItem('customPrompts', JSON.stringify(this.customPrompts));
+                    this.showToast('success', 'Custom prompts have been saved.');
+                    this.showSettingsModal = false;
+                },
+                resetPrompts() {
+                    if(confirm('Are you sure you want to reset all prompts to their default values?')) {
+                        this.customPrompts = JSON.parse(JSON.stringify(this.defaultPrompts));
+                        this.showToast('info', 'Prompts have been reset to default.');
+                    }
+                },
+                handleDrop(event, promptKey) {
+                    const placeholder = event.dataTransfer.getData('text/plain');
+                    const textarea = this.$refs[`${promptKey}Textarea`];
+                    if (!textarea || !placeholder) return;
+
+                    const start = textarea.selectionStart;
+                    const end = textarea.selectionEnd;
+                    const currentValue = this.customPrompts[promptKey];
+                    
+                    this.customPrompts[promptKey] = currentValue.substring(0, start) + placeholder + currentValue.substring(end);
+
+                    this.$nextTick(() => {
+                        textarea.focus();
+                        textarea.selectionStart = textarea.selectionEnd = start + placeholder.length;
+                    });
+                },
+
 
                 // --- USER INFO ---
                 async saveUserInfoAndProceed() {
@@ -678,9 +913,9 @@
                         if(options.regenerate) {
                             const result = this.completedJobs.find(r => r.id === options.result_id);
                             if(!result) throw new Error('Could not find original result for regeneration.');
-                             payload = { resume_id: result.resume_id, company_name: result.company_name, job_description: result.job_description, ai_model: this.aiModel, regenerate: options.regenerate, result_id: options.result_id };
+                             payload = { resume_id: result.resume_id, company_name: result.company_name, job_description: result.job_description, ai_model: this.aiModel, regenerate: options.regenerate, result_id: options.result_id, custom_prompts: this.customPrompts };
                         } else {
-                            payload = { resume_id: this.activeResume.id, company_name: this.companyName, job_description: this.jobDescription, ai_model: this.aiModel, scraped_jd_id: this.scrapedJdIdToCredit };
+                            payload = { resume_id: this.activeResume.id, company_name: this.companyName, job_description: this.jobDescription, ai_model: this.aiModel, scraped_jd_id: this.scrapedJdIdToCredit, custom_prompts: this.customPrompts };
                         }
                         const response = await fetch('/customize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
                         const data = await response.json();
@@ -725,14 +960,24 @@
                 
                 // --- APPLICATION MANAGEMENT ---
                 async getApplications() { try { const r = await fetch('/api/applications'); this.applications = await r.json(); } catch (e) { this.showToast('error', 'Could not fetch applications.'); } },
-                 async viewApplicationDetails(appId) {
+                processInterviewPrepData(prepData) {
+                    if (!prepData) return null;
+                    const addShowAnswer = (q) => ({...q, showAnswer: false});
+                    if (prepData.general_questions) prepData.general_questions = prepData.general_questions.map(addShowAnswer);
+                    if (prepData.role_based_questions) prepData.role_based_questions = prepData.role_based_questions.map(addShowAnswer);
+                    if (prepData.behavioral_questions) prepData.behavioral_questions = prepData.behavioral_questions.map(addShowAnswer);
+                    return prepData;
+                },
+                async viewApplicationDetails(appId) {
                     this.isLoading = true;
                     try {
                         const response = await fetch(`/api/applications/${appId}`);
                         const data = await response.json();
                         if (!response.ok) throw new Error('Could not fetch application details.');
+                        if (!this.resumes.length) await this.getResumes();
                         const resume = this.resumes.find(r => r.id === data.resume_id);
                         data.resume_name = resume ? resume.resume_name : 'Unknown';
+                        data.interview_prep = this.processInterviewPrepData(data.interview_prep);
                         this.activeApplication = data;
                         this.view = 'applicationDetail';
                     } catch (error) { this.showToast('error', error.message); } 
@@ -743,6 +988,42 @@
                         await fetch(`/api/applications/${appId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
                         this.showToast('success', 'Application updated.');
                     } catch (error) { this.showToast('error', 'Could not update application.'); }
+                },
+                
+                // --- INTERVIEW PREP ---
+                async generateInterviewPrep(appId) {
+                    this.showToast('info', 'Starting interview prep generation...');
+                    this.activeJobs.push({ id: `interview-${appId}`, type: 'interview_prep', app_id: appId });
+                    try {
+                        const payload = { ai_model: this.aiModel, custom_prompts: this.customPrompts };
+                        await fetch(`/api/applications/${appId}/generate-interview-prep`, { 
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'}, 
+                            body: JSON.stringify(payload) 
+                        });
+                    } catch (error) {
+                        this.showToast('error', 'Failed to start generation job.');
+                        this.activeJobs = this.activeJobs.filter(j => j.id !== `interview-${appId}`);
+                    }
+                },
+                async copyInterviewPrompt(appId) {
+                    try {
+                        // MODIFIED: Send custom prompt to get correctly formatted prompt text
+                        const response = await fetch(`/api/applications/${appId}/interview-prompt-text`, {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ custom_prompt: this.customPrompts.interview_prep })
+                        });
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.error || 'Failed to get prompt text.');
+                        this.copyToClipboard(data.prompt_text);
+                    } catch(e) { this.showToast('error', e.message); }
+                },
+                isJobActive(type, id) {
+                    if (type === 'interview_prep') {
+                        return this.activeJobs.some(j => j.type === 'interview_prep' && j.app_id === id);
+                    }
+                    return false;
                 },
 
                 // --- UTILITIES ---
