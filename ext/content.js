@@ -4,6 +4,11 @@ let selectedData = {};
 let lastHighlightedElement = null;
 const HIGHLIGHT_CLASS = 'resume-ai-highlight-element';
 
+// New variables for Create Scrape functionality
+let isCreateScrapeMode = false;
+let capturedSelectors = {};
+let currentDomain = '';
+
 function injectStyles() {
   if (document.getElementById('resume-ai-styles')) return;
   const style = document.createElement('style');
@@ -287,10 +292,31 @@ function captureElement(e) {
     lastHighlightedElement = null;
   }
 
+  // Capture CSS selector for Create Scrape mode
+  if (isCreateScrapeMode) {
+    const selector = getRobustSelector(e.target);
+    console.log(`Create Scrape: Attempting to capture ${selectionStep} selector`);
+    console.log(`Create Scrape: Element:`, e.target);
+    console.log(`Create Scrape: Element tag:`, e.target.tagName);
+    console.log(`Create Scrape: Element id:`, e.target.id);
+    console.log(`Create Scrape: Element classes:`, e.target.className);
+    console.log(`Create Scrape: Generated selector:`, selector);
+
+    if (selector) {
+      capturedSelectors[selectionStep] = selector;
+      console.log(`Create Scrape: Successfully captured ${selectionStep} selector:`, selector);
+      console.log(`Create Scrape: Current capturedSelectors:`, capturedSelectors);
+    } else {
+      console.log(`Create Scrape: Failed to capture ${selectionStep} selector for element:`, e.target);
+      console.log(`Create Scrape: Current capturedSelectors:`, capturedSelectors);
+    }
+  }
+
   if (selectionStep === 'title') {
     selectedData.job_title = text;
     selectionStep = 'company';
-    updateUI('Click to select the COMPANY NAME (Press Esc to cancel)', 2);
+    const nextStepText = isCreateScrapeMode ? 'Click to select the COMPANY NAME (capturing selector)' : 'Click to select the COMPANY NAME (Press Esc to cancel)';
+    updateUI(nextStepText, 2);
     chrome.runtime.sendMessage({
       action: 'manualSelectionStep',
       step: 'Select Company Name',
@@ -300,7 +326,8 @@ function captureElement(e) {
   } else if (selectionStep === 'company') {
     selectedData.company_name = text;
     selectionStep = 'description';
-    updateUI('Click to select the JOB DESCRIPTION area (Press Esc to cancel)', 3);
+    const nextStepText = isCreateScrapeMode ? 'Click to select the JOB DESCRIPTION area (capturing selector)' : 'Click to select the JOB DESCRIPTION area (Press Esc to cancel)';
+    updateUI(nextStepText, 3);
     chrome.runtime.sendMessage({
       action: 'manualSelectionStep',
       step: 'Select Job Description',
@@ -310,16 +337,251 @@ function captureElement(e) {
   } else if (selectionStep === 'description') {
     selectedData.job_description = text;
 
-    // Show completion message briefly
-    updateUI('✓ Selection Complete! Sending to API...', 3);
-    setTimeout(() => removeUI(), 2000);
+    if (isCreateScrapeMode) {
+      // Complete the scraper creation process - only save scraper, don't send to API
+      updateUI('✓ Scraper Complete! Saving custom scraper...', 3);
 
-    chrome.runtime.sendMessage({
-      action: 'manualSelectionComplete',
-      data: selectedData
-    });
+      console.log('Content Script: Sending createScrapeComplete with selectors:', capturedSelectors);
+      console.log('Content Script: Selected data:', selectedData);
+      console.log('Content Script: Current domain:', currentDomain);
+
+      chrome.runtime.sendMessage({
+        action: 'createScrapeComplete',
+        data: selectedData,
+        selectors: capturedSelectors,
+        domain: currentDomain,
+        autoSendToApi: false // Don't automatically send to API
+      });
+
+      // Show completion message and close
+      setTimeout(() => {
+        updateUI('✓ Custom scraper saved! You can now use Auto selection.', 3);
+        setTimeout(() => removeUI(), 2000);
+      }, 1000);
+    } else {
+      // Regular manual selection completion
+      updateUI('✓ Selection Complete! Sending to API...', 3);
+      setTimeout(() => removeUI(), 2000);
+
+      chrome.runtime.sendMessage({
+        action: 'manualSelectionComplete',
+        data: selectedData
+      });
+    }
     stopSelectionProcess();
   }
+}
+
+// Helper function to generate CSS selector for an element
+function getElementSelector(element) {
+  if (!element || !element.tagName) return null;
+
+  // Try to get a unique selector
+  if (element.id && element.id.trim()) {
+    return `#${element.id}`;
+  }
+
+  if (element.className && element.className.trim()) {
+    const classes = element.className.trim().split(/\s+/).filter(cls => cls.length > 0);
+    if (classes.length > 0) {
+      // Try to find a unique class combination
+      const classSelector = classes.map(cls => `.${cls}`).join('');
+      if (document.querySelectorAll(classSelector).length === 1) {
+        return classSelector;
+      }
+
+      // Try individual classes for uniqueness
+      for (const className of classes) {
+        const singleClassSelector = `.${className}`;
+        if (document.querySelectorAll(singleClassSelector).length === 1) {
+          return singleClassSelector;
+        }
+      }
+
+      // If no unique class, use the first class with tag
+      return `${element.tagName.toLowerCase()}.${classes[0]}`;
+    }
+  }
+
+  // Fallback to nth-child selector with more context
+  const parent = element.parentNode;
+  if (parent) {
+    const siblings = Array.from(parent.children).filter(child => child.tagName === element.tagName);
+    const index = siblings.indexOf(element) + 1;
+
+    // Try to get a more specific selector by walking up the DOM
+    let currentElement = element;
+    let path = [];
+
+    while (currentElement && currentElement !== document.body && path.length < 3) {
+      if (currentElement.id) {
+        path.unshift(`#${currentElement.id}`);
+        break;
+      } else if (currentElement.className) {
+        const classes = currentElement.className.trim().split(/\s+/);
+        if (classes.length > 0) {
+          path.unshift(`${currentElement.tagName.toLowerCase()}.${classes[0]}`);
+          break;
+        }
+      }
+      currentElement = currentElement.parentNode;
+    }
+
+    if (path.length > 0) {
+      return `${path.join(' ')} > ${element.tagName.toLowerCase()}:nth-child(${index})`;
+    }
+
+    return `${element.tagName.toLowerCase()}:nth-child(${index})`;
+  }
+
+  return element.tagName.toLowerCase();
+}
+
+// Enhanced selector generation for better reliability
+function getRobustSelector(element) {
+  if (!element || !element.tagName) return null;
+
+  // 1. Try ID first (most reliable)
+  if (element.id && element.id.trim()) {
+    return `#${element.id}`;
+  }
+
+  // 2. Try data attributes (most stable)
+  for (const attr of ['data-automation-id', 'data-testid', 'data-cy', 'data-qa', 'data-automation']) {
+    if (element.hasAttribute(attr)) {
+      const value = element.getAttribute(attr);
+      if (value && value.length < 50) { // Avoid very long dynamic values
+        return `[${attr}="${value}"]`;
+      }
+    }
+  }
+
+  // 3. Try stable class names (avoid dynamic ones)
+  if (element.className && element.className.trim()) {
+    const classes = element.className.trim().split(/\s+/).filter(cls => cls.length > 0);
+
+    // Filter out dynamic classes (containing numbers, hashes, etc.)
+    const stableClasses = classes.filter(cls => {
+      // Avoid classes with numbers (likely dynamic)
+      if (/\d/.test(cls)) return false;
+      // Avoid very long class names (likely dynamic)
+      if (cls.length > 30) return false;
+      // Avoid classes with special characters
+      if (/[^a-zA-Z0-9_-]/.test(cls)) return false;
+      return true;
+    });
+
+    if (stableClasses.length > 0) {
+      // Try to find a unique class combination
+      const classSelector = stableClasses.map(cls => `.${cls}`).join('');
+      if (document.querySelectorAll(classSelector).length === 1) {
+        return classSelector;
+      }
+
+      // Try individual stable classes for uniqueness
+      for (const className of stableClasses) {
+        const singleClassSelector = `.${className}`;
+        if (document.querySelectorAll(singleClassSelector).length === 1) {
+          return singleClassSelector;
+        }
+      }
+
+      // Use the first stable class with tag
+      return `${element.tagName.toLowerCase()}.${stableClasses[0]}`;
+    }
+  }
+
+  // 4. Try to find by text content for specific elements
+  const tagName = element.tagName.toLowerCase();
+  if (tagName === 'h1' || tagName === 'h2') {
+    if (element.textContent && element.textContent.trim().length < 100) {
+      const text = element.textContent.trim();
+      // Try to find by exact text match
+      const textSelector = `${tagName}:has-text("${text}")`;
+      try {
+        if (document.querySelectorAll(textSelector).length === 1) {
+          return textSelector;
+        }
+      } catch (e) {
+        // has-text is not standard CSS, skip it
+      }
+    }
+  }
+
+  // 5. Try to find by partial text content for job-related elements
+  if (element.textContent && element.textContent.trim().length < 50) {
+    const text = element.textContent.trim().substring(0, 10);
+    // Look for elements containing this text
+    const textSelector = `${element.tagName.toLowerCase()}:has-text-contains("${text}")`;
+    try {
+      const matches = document.querySelectorAll(textSelector);
+      if (matches.length === 1) {
+        return textSelector;
+      }
+    } catch (e) {
+      // has-text-contains is not standard CSS, skip it
+    }
+  }
+
+  // 6. Fallback to nth-child with more context (more robust)
+  const parent = element.parentNode;
+  if (parent) {
+    const siblings = Array.from(parent.children).filter(child => child.tagName === element.tagName);
+    const index = siblings.indexOf(element) + 1;
+
+    // Try to get a more specific selector by walking up the DOM
+    let currentElement = element;
+    let path = [];
+
+    while (currentElement && currentElement !== document.body && path.length < 3) {
+      if (currentElement.id) {
+        path.unshift(`#${currentElement.id}`);
+        break;
+      } else if (currentElement.className) {
+        const classes = currentElement.className.trim().split(/\s+/);
+        const stableClasses = classes.filter(cls => {
+          if (/\d/.test(cls)) return false;
+          if (cls.length > 30) return false;
+          if (/[^a-zA-Z0-9_-]/.test(cls)) return false;
+          return true;
+        });
+
+        if (stableClasses.length > 0) {
+          path.unshift(`${currentElement.tagName.toLowerCase()}.${stableClasses[0]}`);
+          break;
+        }
+      }
+      currentElement = currentElement.parentNode;
+    }
+
+    if (path.length > 0) {
+      return `${path.join(' ')} > ${element.tagName.toLowerCase()}:nth-child(${index})`;
+    }
+
+    // If no stable parent found, try to find a more unique parent
+    let grandParent = parent.parentNode;
+    if (grandParent) {
+      if (grandParent.id) {
+        return `#${grandParent.id} ${element.tagName.toLowerCase()}:nth-child(${index})`;
+      } else if (grandParent.className) {
+        const classes = grandParent.className.trim().split(/\s+/);
+        const stableClasses = classes.filter(cls => {
+          if (/\d/.test(cls)) return false;
+          if (cls.length > 30) return false;
+          if (/[^a-zA-Z0-9_-]/.test(cls)) return false;
+          return true;
+        });
+
+        if (stableClasses.length > 0) {
+          return `${grandParent.tagName.toLowerCase()}.${stableClasses[0]} ${element.tagName.toLowerCase()}:nth-child(${index})`;
+        }
+      }
+    }
+
+    return `${element.tagName.toLowerCase()}:nth-child(${index})`;
+  }
+
+  return element.tagName.toLowerCase();
 }
 
 function startSelectionProcess() {
@@ -490,6 +752,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // Start the manual selection process when keyboard shortcut is triggered
     startSelectionProcess();
     sendResponse({ status: 'started' });
+  } else if (request.action === 'triggerCreateScrape') {
+    // Start the Create Scrape process
+    startCreateScrapeProcess(request.domain, request.isAddingFallback);
+    sendResponse({ status: 'started' });
   } else if (request.action === 'showCompletionMessage') {
     showCompletionMessage(request.message, request.type);
     sendResponse({ status: 'shown' });
@@ -518,6 +784,101 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     console.log('Content Script: Scraper result', result);
     sendResponse({ result: result });
     return true;
+  } else if (request.action === 'executeCustomScraper') {
+    // Execute custom scraper sent from background script
+    console.log('Content Script: Executing custom scraper', request.scraper.name);
+    console.log('Content Script: Using selectors:', request.scraper.selectors);
+
+    let result = null;
+    try {
+      const scraper = request.scraper;
+      const selectors = scraper.selectors;
+
+      // Get elements using custom selectors with error handling
+      let titleEl = null;
+      let companyEl = null;
+      let descriptionEl = null;
+
+      // Handle both naming conventions for selectors
+      const titleSelector = selectors.job_title || selectors.title;
+      const companySelector = selectors.company_name || selectors.company;
+      const descriptionSelector = selectors.job_description || selectors.description;
+
+      try {
+        titleEl = document.querySelector(titleSelector);
+        console.log('Content Script: Title element found:', titleEl ? 'YES' : 'NO', 'Selector:', titleSelector);
+      } catch (e) {
+        console.log('Content Script: Error finding title element:', e);
+      }
+
+      try {
+        companyEl = document.querySelector(companySelector);
+        console.log('Content Script: Company element found:', companyEl ? 'YES' : 'NO', 'Selector:', companySelector);
+      } catch (e) {
+        console.log('Content Script: Error finding company element:', e);
+      }
+
+      try {
+        descriptionEl = document.querySelector(descriptionSelector);
+        console.log('Content Script: Description element found:', descriptionEl ? 'YES' : 'NO', 'Selector:', descriptionSelector);
+      } catch (e) {
+        console.log('Content Script: Error finding description element:', e);
+      }
+
+      const missing = [];
+      if (!titleEl) missing.push('title');
+      if (!companyEl) missing.push('company');
+      if (!descriptionEl) missing.push('description');
+
+      if (missing.length) {
+        console.log('Content Script: Missing elements:', missing);
+        result = { error: `Missing elements: ${missing.join(', ')}. Custom scraper failed.` };
+      } else {
+        console.log('Content Script: All elements found successfully');
+        result = {
+          job_title: titleEl.innerText.trim(),
+          company_name: companyEl.innerText.trim(),
+          job_description: descriptionEl.innerText.trim(),
+          page_url: window.location.href,
+          scraper_used: scraper.name
+        };
+      }
+    } catch (error) {
+      console.log('Content Script: Error executing custom scraper:', error);
+      result = { error: error.toString() };
+    }
+
+    console.log('Content Script: Custom scraper result', result);
+    sendResponse({ result: result });
+    return true;
   }
   return true;
 });
+
+// Enhanced function to start Create Scrape process
+function startCreateScrapeProcess(domain, isAddingFallback) {
+  if (selectionMode === 'active') return;
+
+  injectStyles();
+  selectionMode = 'active';
+  selectionStep = 'title';
+  selectedData = { page_url: window.location.href };
+
+  // Set Create Scrape mode
+  isCreateScrapeMode = true;
+  currentDomain = domain;
+  capturedSelectors = {};
+
+  document.addEventListener('mouseover', highlightElement);
+  document.addEventListener('click', captureElement, true);
+  document.addEventListener('keydown', handleEscapeKey, true);
+
+  const modeText = isAddingFallback ? 'Adding fallback scraper' : 'Creating custom scraper';
+  updateUI(`🎯 ${modeText} - Click to select the JOB TITLE (capturing selector)`, 1);
+
+  chrome.runtime.sendMessage({
+    action: 'createScrapeStep',
+    step: 'Select Job Title',
+    progress: { current: 1, total: 3, data: selectedData, mode: 'createScrape' }
+  });
+}

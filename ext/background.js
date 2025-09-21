@@ -173,6 +173,37 @@ function scrapeHarriPage() {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log('ResumeAI Background: Received message', request.action);
 
+  if (request.action === 'triggerCreateScrape') {
+    console.log('ResumeAI Background: Create Scrape triggered', request);
+
+    // Get the active tab
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]) {
+        const tabId = tabs[0].id;
+
+        // Send message to content script to start Create Scrape process
+        chrome.tabs.sendMessage(tabId, {
+          action: 'triggerCreateScrape',
+          domain: request.domain,
+          isAddingFallback: request.isAddingFallback
+        }, (response) => {
+          if (chrome.runtime.lastError) {
+            console.error('ResumeAI Background: Error sending Create Scrape message to content script', chrome.runtime.lastError);
+            sendResponse({ status: 'error', error: chrome.runtime.lastError.message });
+          } else {
+            console.log('ResumeAI Background: Successfully triggered Create Scrape', response);
+            sendResponse({ status: 'success' });
+          }
+        });
+      } else {
+        console.error('ResumeAI Background: No active tab found');
+        sendResponse({ status: 'error', error: 'No active tab found' });
+      }
+    });
+
+    return true;
+  }
+
   if (request.action === 'triggerKeyboardShortcut') {
     console.log('ResumeAI Background: Keyboard shortcut triggered');
 
@@ -204,6 +235,23 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // Handle manual selection progress updates
   if (request.action === 'manualSelectionStep') {
     console.log('ResumeAI Background: Selection step update', request.step);
+
+    // Update popup status
+    chrome.runtime.sendMessage({
+      action: 'updatePopupStatus',
+      status: `${request.step} - Click elements on the page`,
+      type: 'info'
+    }).catch(() => {
+      // Popup might not be open, that's okay
+    });
+
+    sendResponse({ status: 'received' });
+    return true;
+  }
+
+  // Handle Create Scrape progress updates
+  if (request.action === 'createScrapeStep') {
+    console.log('ResumeAI Background: Create Scrape step update', request.step);
 
     // Update popup status
     chrome.runtime.sendMessage({
@@ -318,6 +366,139 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  // Handle completed Create Scrape - save custom scraper
+  if (request.action === 'createScrapeComplete') {
+    console.log('ResumeAI Background: Create Scrape completed, saving custom scraper');
+
+    // Save custom scraper to storage
+    chrome.storage.local.get(['customScrapers'], (storageResult) => {
+      const customScrapers = storageResult.customScrapers || {};
+      const domain = request.domain;
+
+      // Initialize domain scrapers if needed
+      if (!customScrapers[domain]) {
+        customScrapers[domain] = { scrapers: [] };
+      }
+
+        // Create new scraper object
+        const newScraper = {
+          id: `scraper-${Date.now()}`,
+          name: `${domain} Custom Scraper`,
+          selectors: request.selectors,
+          created: new Date().toISOString(),
+          lastUsed: new Date().toISOString(),
+          successRate: 1.0 // Start with perfect success rate
+        };
+
+        console.log('ResumeAI Background: Creating scraper with selectors:', request.selectors);
+        console.log('ResumeAI Background: New scraper object:', newScraper);
+
+      // Add to scrapers array (at the beginning for highest priority)
+      customScrapers[domain].scrapers.unshift(newScraper);
+
+      // Save back to storage
+      chrome.storage.local.set({ customScrapers }, () => {
+        console.log('ResumeAI Background: Custom scraper saved successfully');
+
+        // Update popup status
+        chrome.runtime.sendMessage({
+          action: 'updatePopupStatus',
+          status: '✅ Custom scraper created and saved!',
+          type: 'success'
+        }).catch(() => {});
+
+        // Show completion message on the page
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+          if (tabs[0]) {
+            chrome.tabs.sendMessage(tabs[0].id, {
+              action: 'showCompletionMessage',
+              message: '✅ Custom scraper created successfully!\nYou can now use Auto selection on this site.',
+              type: 'success'
+            }).catch(() => {});
+          }
+        });
+
+        // Only send data to API if explicitly requested
+        if (request.autoSendToApi !== false) {
+          // Get session ID from storage
+          chrome.storage.local.get(['sessionId'], (result) => {
+            const sessionId = result.sessionId?.trim();
+
+            if (!sessionId) {
+              console.error('ResumeAI Background: No session ID found');
+              chrome.runtime.sendMessage({
+                action: 'updatePopupStatus',
+                status: '❌ Error: Session ID required. Set it in the extension popup.',
+                type: 'error'
+              }).catch(() => {});
+              sendResponse({ status: 'error', error: 'No session ID found' });
+              return;
+            }
+
+            // Add session ID to the data
+            const dataToSend = {
+              ...request.data,
+              user_session_id: sessionId
+            };
+
+            // Send data to API
+            fetch(API_ENDPOINT, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(dataToSend),
+            })
+            .then(response => {
+              if (!response.ok) {
+                return response.json().then(errorData => {
+                  throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+                });
+              }
+              return response;
+            })
+            .then(() => {
+              console.log('ResumeAI Background: Data successfully sent to API');
+
+              // Update popup status
+              chrome.runtime.sendMessage({
+                action: 'updatePopupStatus',
+                status: '✅ Successfully sent to app!',
+                type: 'success'
+              }).catch(() => {});
+
+              // Update storage for persistence
+              chrome.storage.local.set({
+                lastStatus: '✅ Successfully sent to app!',
+                lastStatusType: 'success'
+              });
+            })
+            .catch(error => {
+              console.error('ResumeAI Background: API Error:', error);
+
+              // Update popup status
+              chrome.runtime.sendMessage({
+                action: 'updatePopupStatus',
+                status: `❌ Error: ${error.message}`,
+                type: 'error'
+              }).catch(() => {});
+
+              // Update storage for persistence
+              chrome.storage.local.set({
+                lastStatus: `❌ Error: ${error.message}`,
+                lastStatusType: 'error'
+              });
+            });
+          });
+        } else {
+          console.log('ResumeAI Background: Create Scrape completed - scraper saved, not sending to API');
+        }
+
+        sendResponse({ status: 'success' });
+      });
+    });
+
+    return true;
+  }
+
   // Handle auto selection (Ctrl+Shift+E)
   if (request.action === 'triggerAutoSelection') {
     console.log('ResumeAI Background: Auto selection triggered');
@@ -327,153 +508,59 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       if (tabs[0]) {
         const tabId = tabs[0].id;
         const url = tabs[0].url;
-
-        // Check if the site is supported
         const hostname = new URL(url).hostname.replace('www.', '').toLowerCase();
-        const supportedSites = ['linkedin.com', 'indeed.com', 'hiringcafe', 'hiring.cafe', 'hiring-cafe', 'harri.com'];
 
-        const isSupported = supportedSites.some(site => hostname.includes(site));
+        console.log('ResumeAI Background: Checking for scrapers for domain', hostname);
 
-        if (!isSupported) {
-          console.log('ResumeAI Background: Unsupported site for auto selection', hostname);
+        // Check for custom scrapers first
+        chrome.storage.local.get(['customScrapers'], (result) => {
+          const customScrapers = result.customScrapers || {};
+          const domainScrapers = customScrapers[hostname];
 
-          // Show error message on the page
-          chrome.tabs.sendMessage(tabId, {
-            action: 'showCompletionMessage',
-            message: `❌ Auto selection not available for this site.\nSupported sites: LinkedIn, Indeed, HiringCafe, Harri\n💡 Use Ctrl+Shift+X for manual selection`,
-            type: 'error'
-          }).catch(() => {});
+          console.log('ResumeAI Background: Checking storage for domain', hostname);
+          console.log('ResumeAI Background: Available custom scrapers:', Object.keys(customScrapers));
+          console.log('ResumeAI Background: Domain scrapers found:', domainScrapers);
 
-          // Update popup status
-          chrome.runtime.sendMessage({
-            action: 'updatePopupStatus',
-            status: `❌ Auto selection not available for ${hostname}`,
-            type: 'error'
-          }).catch(() => {});
+          if (domainScrapers && domainScrapers.scrapers && domainScrapers.scrapers.length > 0) {
+            console.log('ResumeAI Background: Found custom scrapers for domain', hostname, domainScrapers.scrapers.length);
+            console.log('ResumeAI Background: Using custom scrapers for', hostname);
 
-          sendResponse({ status: 'unsupported', site: hostname });
-          return;
-        }
+            // Try custom scrapers first
+            tryCustomScrapers(tabId, hostname, domainScrapers.scrapers, 0);
+          } else {
+            console.log('ResumeAI Background: No custom scrapers found for', hostname);
+            console.log('ResumeAI Background: Checking for built-in scrapers...');
 
-        console.log('ResumeAI Background: Starting auto selection for supported site', hostname);
+            // Fall back to built-in scrapers
+            const supportedSites = ['linkedin.com', 'indeed.com', 'hiringcafe', 'hiring.cafe', 'hiring-cafe', 'harri.com'];
+            const isSupported = supportedSites.some(site => hostname.includes(site));
 
-        // Run auto selection directly using the scraper functions
-        let scraperFunc = null;
-        if (hostname.includes('linkedin.com')) {
-          scraperFunc = scrapeLinkedInPage;
-        } else if (hostname.includes('indeed.com')) {
-          scraperFunc = scrapeIndeedPage;
-        } else if (hostname.includes('hiringcafe') || hostname.includes('hiring.cafe') || hostname.includes('hiring-cafe')) {
-          scraperFunc = scrapeHiringCafePage;
-        } else if (hostname.includes('harri.com')) {
-          scraperFunc = scrapeHarriPage;
-        }
+            if (!isSupported) {
+              console.log('ResumeAI Background: Unsupported site for auto selection', hostname);
 
-        if (scraperFunc) {
-          // Show progress message
-          chrome.tabs.sendMessage(tabId, {
-            action: 'showCompletionMessage',
-            message: `🤖 Running auto selection for ${hostname}...`,
-            type: 'info'
-          }).catch(() => {});
-
-          // Send scraper function to content script to execute
-          chrome.tabs.sendMessage(tabId, {
-            action: 'executeScraper',
-            scraperName: scraperFunc.name,
-            hostname: hostname
-          }, (response) => {
-            if (chrome.runtime.lastError) {
-              console.error('ResumeAI Background: Error sending scraper to content script', chrome.runtime.lastError);
+              // Show error message on the page
               chrome.tabs.sendMessage(tabId, {
                 action: 'showCompletionMessage',
-                message: `❌ Error: ${chrome.runtime.lastError.message}`,
+                message: `❌ Auto selection not available for this site.\nSupported sites: LinkedIn, Indeed, HiringCafe, Harri\n💡 Use Create Scrape to add support for this site`,
                 type: 'error'
               }).catch(() => {});
+
+              // Update popup status
+              chrome.runtime.sendMessage({
+                action: 'updatePopupStatus',
+                status: `❌ Auto selection not available for ${hostname}`,
+                type: 'error'
+              }).catch(() => {});
+
+              sendResponse({ status: 'unsupported', site: hostname });
               return;
             }
 
-            if (response && response.result) {
-              const result = response.result;
-
-              if (result && !result.error) {
-                // Send to API
-                chrome.storage.local.get(['sessionId'], (storageResult) => {
-                  const sessionId = storageResult.sessionId?.trim();
-
-                  if (!sessionId) {
-                    chrome.tabs.sendMessage(tabId, {
-                      action: 'showCompletionMessage',
-                      message: '❌ Error: Session ID required. Set it in the extension popup.',
-                      type: 'error'
-                    }).catch(() => {});
-                    return;
-                  }
-
-                  const dataToSend = {
-                    ...result,
-                    user_session_id: sessionId
-                  };
-
-                  fetch(API_ENDPOINT, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(dataToSend),
-                  })
-                  .then(response => {
-                    if (!response.ok) {
-                      return response.json().then(errorData => {
-                        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-                      });
-                    }
-                    return response;
-                  })
-                  .then(() => {
-                    console.log('ResumeAI Background: Auto selection successful');
-                    chrome.tabs.sendMessage(tabId, {
-                      action: 'showCompletionMessage',
-                      message: '✅ Job data successfully sent to app!',
-                      type: 'success'
-                    }).catch(() => {});
-
-                    chrome.storage.local.set({
-                      lastStatus: '✅ Successfully sent to app!',
-                      lastStatusType: 'success'
-                    });
-                  })
-                  .catch(error => {
-                    console.error('ResumeAI Background: Auto selection API error:', error);
-                    chrome.tabs.sendMessage(tabId, {
-                      action: 'showCompletionMessage',
-                      message: `❌ Error: ${error.message}`,
-                      type: 'error'
-                    }).catch(() => {});
-
-                    chrome.storage.local.set({
-                      lastStatus: `❌ Error: ${error.message}`,
-                      lastStatusType: 'error'
-                    });
-                  });
-                });
-              } else {
-                const errorMessage = result?.error || 'Could not auto-parse page';
-                chrome.tabs.sendMessage(tabId, {
-                  action: 'showCompletionMessage',
-                  message: `❌ ${errorMessage}`,
-                  type: 'error'
-                }).catch(() => {});
-              }
-            } else {
-              chrome.tabs.sendMessage(tabId, {
-                action: 'showCompletionMessage',
-                message: '❌ Error: Could not execute scraper on this page',
-                type: 'error'
-              }).catch(() => {});
-            }
-          });
-        }
-
-        sendResponse({ status: 'started', site: hostname });
+            // Use built-in scraper
+            console.log('ResumeAI Background: Using built-in scraper for', hostname);
+            tryBuiltInScraper(tabId, hostname);
+          }
+        });
       } else {
         console.error('ResumeAI Background: No active tab found');
         sendResponse({ status: 'error', error: 'No active tab found' });
@@ -482,6 +569,263 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     return true;
   }
+
+// Helper function to try custom scrapers in order
+function tryCustomScrapers(tabId, hostname, scrapers, index) {
+  if (index >= scrapers.length) {
+    console.log('ResumeAI Background: All custom scrapers failed, trying built-in scraper');
+    tryBuiltInScraper(tabId, hostname);
+    return;
+  }
+
+  const scraper = scrapers[index];
+  console.log('ResumeAI Background: Trying custom scraper', scraper.name, 'for', hostname);
+  console.log('ResumeAI Background: Scraper selectors:', scraper.selectors);
+
+  // Show progress message
+  chrome.tabs.sendMessage(tabId, {
+    action: 'showCompletionMessage',
+    message: `🤖 Running custom scraper for ${hostname}...`,
+    type: 'info'
+  }).catch(() => {});
+
+  // Send custom scraper to content script to execute
+  console.log('ResumeAI Background: Sending scraper to content script:', scraper);
+  chrome.tabs.sendMessage(tabId, {
+    action: 'executeCustomScraper',
+    scraper: scraper,
+    hostname: hostname
+  }, (response) => {
+    console.log('ResumeAI Background: Content script response:', response);
+    if (chrome.runtime.lastError) {
+      console.error('ResumeAI Background: Error sending custom scraper to content script', chrome.runtime.lastError);
+      // Try next scraper
+      tryCustomScrapers(tabId, hostname, scrapers, index + 1);
+      return;
+    }
+
+    if (response && response.result) {
+      const result = response.result;
+
+      if (result && !result.error) {
+        console.log('ResumeAI Background: Custom scraper successful');
+
+        // Update success rate and last used time
+        scraper.lastUsed = new Date().toISOString();
+        scraper.successRate = Math.min(1.0, scraper.successRate + 0.1);
+
+        // Save updated scraper
+        chrome.storage.local.get(['customScrapers'], (result) => {
+          const customScrapers = result.customScrapers || {};
+          if (customScrapers[hostname]) {
+            customScrapers[hostname].scrapers[index] = scraper;
+            chrome.storage.local.set({ customScrapers });
+          }
+        });
+
+        // Send to API
+        chrome.storage.local.get(['sessionId'], (storageResult) => {
+          const sessionId = storageResult.sessionId?.trim();
+
+          if (!sessionId) {
+            chrome.tabs.sendMessage(tabId, {
+              action: 'showCompletionMessage',
+              message: '❌ Error: Session ID required. Set it in the extension popup.',
+              type: 'error'
+            }).catch(() => {});
+            return;
+          }
+
+          const dataToSend = {
+            ...result,
+            user_session_id: sessionId
+          };
+
+          fetch(API_ENDPOINT, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(dataToSend),
+          })
+          .then(response => {
+            if (!response.ok) {
+              return response.json().then(errorData => {
+                throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+              });
+            }
+            return response;
+          })
+          .then(() => {
+            console.log('ResumeAI Background: Custom scraper data sent to API');
+            chrome.tabs.sendMessage(tabId, {
+              action: 'showCompletionMessage',
+              message: '✅ Job data successfully sent to app!',
+              type: 'success'
+            }).catch(() => {});
+
+            chrome.storage.local.set({
+              lastStatus: '✅ Successfully sent to app!',
+              lastStatusType: 'success'
+            });
+          })
+          .catch(error => {
+            console.error('ResumeAI Background: Custom scraper API error:', error);
+            chrome.tabs.sendMessage(tabId, {
+              action: 'showCompletionMessage',
+              message: `❌ Error: ${error.message}`,
+              type: 'error'
+            }).catch(() => {});
+
+            chrome.storage.local.set({
+              lastStatus: `❌ Error: ${error.message}`,
+              lastStatusType: 'error'
+            });
+          });
+        });
+      } else {
+        console.log('ResumeAI Background: Custom scraper failed, trying next one');
+        // Update failure rate
+        scraper.successRate = Math.max(0.0, scraper.successRate - 0.2);
+
+        // Save updated scraper
+        chrome.storage.local.get(['customScrapers'], (result) => {
+          const customScrapers = result.customScrapers || {};
+          if (customScrapers[hostname]) {
+            customScrapers[hostname].scrapers[index] = scraper;
+            chrome.storage.local.set({ customScrapers });
+          }
+        });
+
+        // Try next scraper
+        tryCustomScrapers(tabId, hostname, scrapers, index + 1);
+      }
+    } else {
+      console.log('ResumeAI Background: Custom scraper returned no result, trying next one');
+      // Try next scraper
+      tryCustomScrapers(tabId, hostname, scrapers, index + 1);
+    }
+  });
+}
+
+// Helper function to try built-in scraper
+function tryBuiltInScraper(tabId, hostname) {
+  console.log('ResumeAI Background: Trying built-in scraper for', hostname);
+
+  // Show progress message
+  chrome.tabs.sendMessage(tabId, {
+    action: 'showCompletionMessage',
+    message: `🤖 Running built-in scraper for ${hostname}...`,
+    type: 'info'
+  }).catch(() => {});
+
+  // Send built-in scraper to content script to execute
+  chrome.tabs.sendMessage(tabId, {
+    action: 'executeScraper',
+    scraperName: getBuiltInScraperName(hostname),
+    hostname: hostname
+  }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.error('ResumeAI Background: Error sending built-in scraper to content script', chrome.runtime.lastError);
+      chrome.tabs.sendMessage(tabId, {
+        action: 'showCompletionMessage',
+        message: `❌ Error: ${chrome.runtime.lastError.message}`,
+        type: 'error'
+      }).catch(() => {});
+      return;
+    }
+
+    if (response && response.result) {
+      const result = response.result;
+
+      if (result && !result.error) {
+        // Send to API
+        chrome.storage.local.get(['sessionId'], (storageResult) => {
+          const sessionId = storageResult.sessionId?.trim();
+
+          if (!sessionId) {
+            chrome.tabs.sendMessage(tabId, {
+              action: 'showCompletionMessage',
+              message: '❌ Error: Session ID required. Set it in the extension popup.',
+              type: 'error'
+            }).catch(() => {});
+            return;
+          }
+
+          const dataToSend = {
+            ...result,
+            user_session_id: sessionId
+          };
+
+          fetch(API_ENDPOINT, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(dataToSend),
+          })
+          .then(response => {
+            if (!response.ok) {
+              return response.json().then(errorData => {
+                throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+              });
+            }
+            return response;
+          })
+          .then(() => {
+            console.log('ResumeAI Background: Built-in scraper successful');
+            chrome.tabs.sendMessage(tabId, {
+              action: 'showCompletionMessage',
+              message: '✅ Job data successfully sent to app!',
+              type: 'success'
+            }).catch(() => {});
+
+            chrome.storage.local.set({
+              lastStatus: '✅ Successfully sent to app!',
+              lastStatusType: 'success'
+            });
+          })
+          .catch(error => {
+            console.error('ResumeAI Background: Built-in scraper API error:', error);
+            chrome.tabs.sendMessage(tabId, {
+              action: 'showCompletionMessage',
+              message: `❌ Error: ${error.message}`,
+              type: 'error'
+            }).catch(() => {});
+
+            chrome.storage.local.set({
+              lastStatus: `❌ Error: ${error.message}`,
+              lastStatusType: 'error'
+            });
+          });
+        });
+      } else {
+        const errorMessage = result?.error || 'Could not auto-parse page';
+        chrome.tabs.sendMessage(tabId, {
+          action: 'showCompletionMessage',
+          message: `❌ ${errorMessage}`,
+          type: 'error'
+        }).catch(() => {});
+      }
+    } else {
+      chrome.tabs.sendMessage(tabId, {
+        action: 'showCompletionMessage',
+        message: '❌ Error: Could not execute built-in scraper on this page',
+        type: 'error'
+      }).catch(() => {});
+    }
+  });
+}
+
+// Helper function to get built-in scraper name
+function getBuiltInScraperName(hostname) {
+  if (hostname.includes('linkedin.com')) {
+    return 'scrapeLinkedInPage';
+  } else if (hostname.includes('indeed.com')) {
+    return 'scrapeIndeedPage';
+  } else if (hostname.includes('hiringcafe') || hostname.includes('hiring.cafe') || hostname.includes('hiring-cafe')) {
+    return 'scrapeHiringCafePage';
+  } else if (hostname.includes('harri.com')) {
+    return 'scrapeHarriPage';
+  }
+  return null;
+}
 
   // Handle other message types if needed
   sendResponse({ status: 'received' });

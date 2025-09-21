@@ -4,6 +4,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const autoParseBtn = document.getElementById('autoParse');
   const manualParseBtn = document.getElementById('manualParse');
+  const createScrapeBtn = document.getElementById('createScrape');
+  const scraperInfoDiv = document.getElementById('scraperInfo');
   const sessionIdInput = document.getElementById('sessionId');
   const statusDiv = document.getElementById('status');
 
@@ -14,6 +16,31 @@ document.addEventListener('DOMContentLoaded', () => {
     const hasSessionId = sessionIdInput.value.trim() !== '';
     autoParseBtn.disabled = !hasSessionId;
     manualParseBtn.disabled = !hasSessionId;
+    createScrapeBtn.disabled = !hasSessionId;
+  }
+
+  // Function to check for existing scrapers and update UI
+  async function checkExistingScrapers() {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !tab.url) return;
+
+    const url = new URL(tab.url);
+    const domain = url.hostname.replace('www.', '');
+
+    chrome.storage.local.get(['customScrapers'], (result) => {
+      const customScrapers = result.customScrapers || {};
+      const domainScrapers = customScrapers[domain];
+
+      if (domainScrapers && domainScrapers.scrapers && domainScrapers.scrapers.length > 0) {
+        const scraperCount = domainScrapers.scrapers.length;
+        createScrapeBtn.textContent = `Add Fallback Scraper (${scraperCount})`;
+        scraperInfoDiv.textContent = `${scraperCount} custom scraper${scraperCount > 1 ? 's' : ''} for ${domain}`;
+        scraperInfoDiv.style.display = 'block';
+      } else {
+        createScrapeBtn.textContent = 'Create Scrape';
+        scraperInfoDiv.style.display = 'none';
+      }
+    });
   }
 
   // Load saved session ID & last status from storage
@@ -239,6 +266,43 @@ document.addEventListener('DOMContentLoaded', () => {
           lastStatusType: 'info'
         });
       }
+    });
+  });
+
+  // Create Scrape button handler - enhanced manual selection for scraper creation
+  createScrapeBtn.addEventListener('click', async () => {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !tab.url) {
+      setStatus('Error: Could not determine active tab URL', 'error');
+      return;
+    }
+
+    const url = new URL(tab.url);
+    const domain = url.hostname.replace('www.', '');
+
+    // Check if we already have scrapers for this domain
+    chrome.storage.local.get(['customScrapers'], (result) => {
+      const customScrapers = result.customScrapers || {};
+      const domainScrapers = customScrapers[domain];
+      const isAddingFallback = domainScrapers && domainScrapers.scrapers && domainScrapers.scrapers.length > 0;
+
+      // Send message to background script to trigger enhanced manual selection
+      chrome.runtime.sendMessage({
+        action: 'triggerCreateScrape',
+        domain: domain,
+        isAddingFallback: isAddingFallback
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          setStatus(`Error: ${chrome.runtime.lastError.message}`, 'error');
+        } else {
+          const actionText = isAddingFallback ? 'Adding fallback scraper' : 'Creating custom scraper';
+          setStatus(`${actionText} started. Click elements on the page.`, 'info');
+          chrome.storage.local.set({
+            lastStatus: `${actionText} started. Click elements on the page.`,
+            lastStatusType: 'info'
+          });
+        }
+      });
     });
   });
 
