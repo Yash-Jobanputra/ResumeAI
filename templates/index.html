@@ -379,43 +379,78 @@
 
              <div x-show="mainView === 'resultsHub'" class="fade-in bg-white rounded-lg shadow-lg p-6">
                  <h2 class="text-2xl font-semibold mb-4">AI Results Hub</h2>
-                 <div x-show="completedJobs.length === 0 && activeJobs.length === 0" class="text-center p-8"><p class="text-gray-500">No AI jobs run yet. Customize a resume to see results here.</p></div>
-                 <div x-show="completedJobs.length > 0 || activeJobs.length > 0" class="overflow-x-auto">
-                    <table class="min-w-full divide-y divide-gray-200">
-                        <thead class="bg-gray-50">
-                            <tr>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Company</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Created</th>
-                                <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody class="bg-white divide-y divide-gray-200">
-                            <template x-for="job in activeJobs.filter(j => j.type !== 'interview_prep')" :key="job.id">
-                                 <tr class="bg-blue-50">
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900" x-text="job.company_name"></td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm">
-                                        <div class="flex items-center space-x-2 text-gray-500">
-                                            <div class="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-blue-500"></div>
-                                            <span>Processing...</span>
-                                        </div>
-                                    </td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="new Date().toLocaleDateString()"></td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium"></td>
-                                 </tr>
-                            </template>
-                            <template x-for="job in completedJobs" :key="job.id">
-                                <tr class="hover:bg-gray-50">
-                                    <td @click="viewResults(job.id)" class="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600 hover:text-blue-800 cursor-pointer" x-text="job.company_name"></td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-green-600 font-semibold">Ready to View</td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="new Date(job.timestamp).toLocaleDateString()"></td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                        <button @click="deleteResult(job.id)" class="text-red-600 hover:text-red-900">Discard</button>
-                                    </td>
-                                </tr>
-                            </template>
-                        </tbody>
-                    </table>
+
+                 <!-- Empty state -->
+                 <div x-show="completedJobs.length === 0 && activeJobs.length === 0" class="text-center p-8">
+                     <div class="mb-4">
+                         <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                         </svg>
+                     </div>
+                     <h3 class="text-lg font-medium text-gray-900 mb-2">No AI Results Yet</h3>
+                     <p class="text-gray-500 mb-6">Customize a resume with a job description to see AI-generated results here.</p>
+                     <button @click="navigateTo('scrapedJDs')" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+                         Browse Scraped Jobs
+                     </button>
+                 </div>
+
+                 <!-- Results display -->
+                 <div x-show="completedJobs.length > 0 || activeJobs.length > 0" class="space-y-4">
+                     <!-- Active Jobs Section -->
+                     <div x-show="activeJobs.length > 0">
+                         <h3 class="text-lg font-medium text-gray-900 mb-3 flex items-center">
+                             <div class="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-blue-500 mr-2"></div>
+                             Processing Jobs
+                         </h3>
+                         <div class="space-y-2">
+                             <template x-for="job in activeJobs.filter(j => j.type !== 'interview_prep')" :key="job.id">
+                                 <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                                     <div class="flex items-center justify-between">
+                                         <div class="flex items-center space-x-3">
+                                             <div class="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-blue-500"></div>
+                                             <div>
+                                                 <p class="font-medium text-gray-900" x-text="job.company_name"></p>
+                                                 <p class="text-sm text-gray-500">Processing your customization...</p>
+                                             </div>
+                                         </div>
+                                         <div class="text-xs text-gray-400">
+                                             Started <span x-text="new Date().toLocaleTimeString()"></span>
+                                         </div>
+                                     </div>
+                                 </div>
+                             </template>
+                         </div>
+                     </div>
+
+                     <!-- Completed Jobs Section -->
+                     <div x-show="completedJobs.length > 0">
+                         <h3 class="text-lg font-medium text-gray-900 mb-3">Completed Results</h3>
+                         <div class="grid gap-3">
+                             <template x-for="job in completedJobs" :key="job.id">
+                                 <div class="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                                     <div class="flex items-center justify-between">
+                                         <div @click="viewResults(job.id)" class="flex-1 cursor-pointer">
+                                             <div class="flex items-center space-x-3">
+                                                 <div class="w-3 h-3 bg-green-500 rounded-full"></div>
+                                                 <div>
+                                                     <p class="font-medium text-gray-900" x-text="job.company_name"></p>
+                                                     <p class="text-sm text-gray-500" x-text="new Date(job.timestamp).toLocaleDateString() + ' at ' + new Date(job.timestamp).toLocaleTimeString()"></p>
+                                                 </div>
+                                             </div>
+                                         </div>
+                                         <div class="flex items-center space-x-3">
+                                             <button @click="viewResults(job.id)" class="bg-green-100 text-green-800 px-3 py-1 rounded-md text-sm hover:bg-green-200">
+                                                 View Results
+                                             </button>
+                                             <button @click="deleteResult(job.id)" class="text-red-600 hover:text-red-900 text-sm">
+                                                 Delete
+                                             </button>
+                                         </div>
+                                     </div>
+                                 </div>
+                             </template>
+                         </div>
+                     </div>
                  </div>
             </div>
 
@@ -519,9 +554,9 @@
                                         <div class="h-4 rounded-full" :class="activeResult.match_score >= 80 ? 'bg-green-500' : 'bg-yellow-500'" :style="`width: ${activeResult.match_score}%`"></div>
                                     </div>
                                 </div>
-                                <div x-show="activeResult.match_score_analysis" class="text-sm text-gray-600 italic border-t pt-3">
-                                    <p x-text="activeResult.match_score_analysis"></p>
-                                </div>
+                        <div x-show="activeResult.match_score_analysis" class="text-sm text-gray-600 border-t pt-3">
+                            <div class="prose prose-sm max-w-none" x-html="formatMatchAnalysis(activeResult.match_score_analysis)"></div>
+                        </div>
                             </div>
                         </div>
                     </div>
@@ -861,9 +896,13 @@
                     this.socket.on('task_progress', (data) => { this.showToast('info', data.status); });
 
                     this.socket.on('task_success', async (data) => {
+                        console.log('=== TASK SUCCESS DEBUG ===');
                         console.log('Received task_success:', data.job_id);
+                        console.log('Full data received:', JSON.stringify(data, null, 2));
+
                         const job = this.activeJobs.find(j => j.id === data.job_id);
                         console.log('Found matching job:', !!job);
+                        console.log('Job details:', job);
 
                         if (!job) {
                             console.log('No matching job found in activeJobs, checking if job completed while disconnected');
@@ -878,41 +917,155 @@
                             return;
                         }
 
-                        const result = data.result;
-                        if (result.original_paragraph) {
-                            const resultIndex = this.completedJobs.findIndex(r => r.id === job.result_id);
+                        try {
+                            const result = data.result;
+                            console.log('Processing result:', result);
+
+                            // Validate result data
+                            if (!result) {
+                                console.error('Received empty result data');
+                                this.showToast('error', 'Received empty result from server');
+                                return;
+                            }
+
+                            // DEBUG: Log all completed jobs to see what we're working with
+                            console.log('Current completed jobs:', this.completedJobs.map(j => ({ id: j.id, company: j.company_name, result_id: j.result_id })));
+
+                            let resultIndex = -1;
+                            let originalResult = null;
+
+                            // Try multiple methods to find the original result
+                            if (job.result_id) {
+                                resultIndex = this.completedJobs.findIndex(r => r.id === job.result_id);
+                                console.log('Looking for result with ID:', job.result_id, 'Found at index:', resultIndex);
+                            }
+
+                            // If not found by result_id, try to find by other criteria
+                            if (resultIndex === -1) {
+                                // Try to find by company name and recent timestamp
+                                const recentResults = this.completedJobs.filter(r =>
+                                    r.company_name === job.company_name &&
+                                    r.timestamp && (Date.now() - r.timestamp) < 300000 // Within 5 minutes
+                                );
+                                if (recentResults.length > 0) {
+                                    resultIndex = this.completedJobs.findIndex(r => r.id === recentResults[0].id);
+                                    console.log('Found result by company name and timestamp:', recentResults[0].id);
+                                }
+                            }
+
                             if (resultIndex > -1) {
-                                const updatedParagraphs = { ...this.completedJobs[resultIndex].customized_paragraphs };
+                                originalResult = this.completedJobs[resultIndex];
+                                console.log('Found original result:', originalResult.id);
+                            } else {
+                                console.error('Could not find original result for regeneration. Available results:',
+                                    this.completedJobs.map(r => ({ id: r.id, company: r.company_name })));
+                                this.showToast('error', 'Could not find original result to update');
+                                return;
+                            }
+
+                            if (result.original_paragraph) {
+                                // Handle single paragraph regeneration
+                                console.log('Processing single paragraph regeneration');
+                                const updatedParagraphs = { ...originalResult.customized_paragraphs };
                                 updatedParagraphs[result.original_paragraph] = result.enhanced_text;
                                 this.completedJobs[resultIndex].customized_paragraphs = updatedParagraphs;
-                                if(this.activeResult.id === job.result_id) this.activeResult.customized_paragraphs = updatedParagraphs;
+
+                                // Update activeResult if it's the same job
+                                if(this.activeResult.id === originalResult.id) {
+                                    this.activeResult.customized_paragraphs = { ...updatedParagraphs };
+                                    this.forceUpdate();
+                                }
+
                                 this.showToast('success', 'Paragraph regenerated!');
+                            } else if (result.original_paragraph || result.customized_paragraphs || result.cover_letter || result.regenerate) {
+                                // Handle different regeneration types
+                                console.log('Processing regeneration');
+
+                                // Handle single paragraph regeneration
+                                if (result.original_paragraph) {
+                                    console.log('Processing single paragraph regeneration');
+                                    const updatedParagraphs = { ...originalResult.customized_paragraphs };
+                                    updatedParagraphs[result.original_paragraph] = result.enhanced_text;
+                                    this.completedJobs[resultIndex].customized_paragraphs = updatedParagraphs;
+
+                                    if(this.activeResult.id === originalResult.id) {
+                                        this.activeResult.customized_paragraphs = { ...updatedParagraphs };
+                                        this.forceUpdate();
+                                    }
+                                    this.showToast('success', 'Paragraph regenerated!');
+
+                                // Handle cover letter regeneration
+                                } else if (result.cover_letter) {
+                                    console.log('Processing cover letter regeneration');
+                                    this.completedJobs[resultIndex].cover_letter = result.cover_letter;
+                                    this.completedJobs[resultIndex].match_score = result.match_score;
+                                    this.completedJobs[resultIndex].match_score_analysis = result.match_score_analysis;
+
+                                    if(this.activeResult.id === originalResult.id) {
+                                        this.activeResult.cover_letter = result.cover_letter;
+                                        this.activeResult.match_score = result.match_score;
+                                        this.activeResult.match_score_analysis = result.match_score_analysis;
+                                        this.forceUpdate();
+                                    }
+                                    this.showToast('success', 'Cover letter regenerated!');
+
+                                // Handle full paragraph regeneration (only if customized_paragraphs is not empty)
+                                } else if (result.customized_paragraphs && Object.keys(result.customized_paragraphs).length > 0) {
+                                    console.log('Processing full paragraph regeneration');
+                                    this.completedJobs[resultIndex].customized_paragraphs = result.customized_paragraphs;
+
+                                    if(this.activeResult.id === originalResult.id) {
+                                        this.activeResult.customized_paragraphs = { ...result.customized_paragraphs };
+                                        this.forceUpdate();
+                                    }
+                                    this.showToast('success', 'Paragraphs regenerated!');
+
+                                // Handle object-based regeneration types
+                                } else if (result.regenerate && typeof result.regenerate === 'object') {
+                                    console.log('Processing object-based regeneration');
+                                    if (result.regenerate.single_paragraph) {
+                                        this.showToast('success', 'Paragraph regenerated!');
+                                    } else if (result.regenerate.paragraphs) {
+                                        this.completedJobs[resultIndex].customized_paragraphs = result.customized_paragraphs || {};
+                                        if(this.activeResult.id === originalResult.id) {
+                                            this.activeResult.customized_paragraphs = { ...result.customized_paragraphs };
+                                            this.forceUpdate();
+                                        }
+                                        this.showToast('success', 'Paragraphs regenerated!');
+                                    } else if (result.regenerate.cover_letter) {
+                                        this.completedJobs[resultIndex].cover_letter = result.cover_letter || '';
+                                        if(this.activeResult.id === originalResult.id) {
+                                            this.activeResult.cover_letter = result.cover_letter || '';
+                                            this.forceUpdate();
+                                        }
+                                        this.showToast('success', 'Cover letter regenerated!');
+                                    }
+                                } else {
+                                    console.error('Unknown regeneration format:', result);
+                                    this.showToast('error', 'Unknown regeneration format received');
+                                }
+                            } else {
+                                // Handle initial customization (not regeneration)
+                                const newResult = { id: data.job_id, timestamp: Date.now(), ...job, ...data.result };
+                                this.completedJobs.unshift(newResult);
+                                this.showToast('success', `AI result for ${job.company_name} is ready!`);
+                                // Refresh scraped JDs to get updated status from database
+                                if (job.scraped_jd_id) {
+                                    await this.getScrapedJDs();
+                                }
                             }
-                        } else if (result.regenerate) {
-                             const resultIndex = this.completedJobs.findIndex(r => r.id === job.result_id);
-                             if (resultIndex > -1) {
-                                 if(result.regenerate === 'paragraphs') {
-                                     this.completedJobs[resultIndex].customized_paragraphs = result.customized_paragraphs;
-                                     if(this.activeResult.id === job.result_id) this.activeResult.customized_paragraphs = result.customized_paragraphs;
-                                     this.showToast('success', 'Paragraphs regenerated!');
-                                 } else {
-                                     this.completedJobs[resultIndex].cover_letter = result.cover_letter;
-                                     if(this.activeResult.id === job.result_id) this.activeResult.cover_letter = result.cover_letter;
-                                     this.showToast('success', 'Cover letter regenerated!');
-                                 }
-                             }
-                        } else {
-                            const newResult = { id: data.job_id, timestamp: Date.now(), ...job, ...data.result };
-                            this.completedJobs.unshift(newResult);
-                            this.showToast('success', `AI result for ${job.company_name} is ready!`);
-                            // Refresh scraped JDs to get updated status from database
-                            if (job.scraped_jd_id) {
-                                await this.getScrapedJDs();
-                            }
+
+                            // Save updated state to localStorage
+                            localStorage.setItem('completedJobs', JSON.stringify(this.completedJobs));
+                            this.activeJobs = this.activeJobs.filter(j => j.id !== data.job_id);
+                            localStorage.setItem('activeJobs', JSON.stringify(this.activeJobs));
+
+                            console.log('=== TASK SUCCESS DEBUG END ===');
+
+                        } catch (error) {
+                            console.error('Error processing task success:', error);
+                            this.showToast('error', 'Error processing AI result');
                         }
-                        localStorage.setItem('completedJobs', JSON.stringify(this.completedJobs));
-                        this.activeJobs = this.activeJobs.filter(j => j.id !== data.job_id);
-                        localStorage.setItem('activeJobs', JSON.stringify(this.activeJobs));
                     });
 
                     this.socket.on('task_error', (data) => {
@@ -932,15 +1085,39 @@
                     });
 
                     this.socket.on('interview_prep_ready', (data) => {
+                        console.log('=== INTERVIEW PREP READY DEBUG ===');
                         console.log('Received interview_prep_ready:', data.app_id);
+                        console.log('Full data received:', JSON.stringify(data, null, 2));
+
                         this.showToast('success', `Interview prep for application #${data.app_id} is ready!`);
+
+                        // Remove from active jobs
                         this.activeJobs = this.activeJobs.filter(j => !(j.type === 'interview_prep' && j.app_id === data.app_id));
                         localStorage.setItem('activeJobs', JSON.stringify(this.activeJobs));
+
+                        // Update applications array
                         const appIndex = this.applications.findIndex(a => a.id === data.app_id);
-                        if (appIndex > -1) this.applications[appIndex].interview_prep = data.interview_prep;
-                        if (this.activeApplication && this.activeApplication.id === data.app_id) {
-                            this.activeApplication.interview_prep = this.processInterviewPrepData(data.interview_prep);
+                        if (appIndex > -1) {
+                            console.log('Updating application at index:', appIndex);
+                            this.applications[appIndex].interview_prep = this.processInterviewPrepData(data.interview_prep);
+                            console.log('Updated application interview_prep:', !!this.applications[appIndex].interview_prep);
+                        } else {
+                            console.log('Could not find application with ID:', data.app_id, 'in applications array');
+                            console.log('Available applications:', this.applications.map(a => a.id));
                         }
+
+                        // Update activeApplication if it's the same one
+                        if (this.activeApplication && this.activeApplication.id === data.app_id) {
+                            console.log('Updating activeApplication interview_prep');
+                            this.activeApplication.interview_prep = this.processInterviewPrepData(data.interview_prep);
+                            console.log('Updated activeApplication interview_prep:', !!this.activeApplication.interview_prep);
+                            // Force UI update
+                            this.forceUpdate();
+                        } else {
+                            console.log('Active application ID:', this.activeApplication?.id, 'vs event app ID:', data.app_id);
+                        }
+
+                        console.log('=== INTERVIEW PREP READY DEBUG END ===');
                     });
 
                     // Handle reconnection
@@ -1027,6 +1204,8 @@ Generate two distinct categories of questions. For each question, provide both '
                 },
                 resetPrompts() {
                     if(confirm('Are you sure you want to reset all prompts to their default values?')) {
+                        // Reset to the exact same defaults that are used internally
+                        this.defineDefaultPrompts();
                         this.customPrompts = JSON.parse(JSON.stringify(this.defaultPrompts));
                         this.showToast('info', 'Prompts have been reset to default.');
                         // Force re-render of highlighting after reset
@@ -1268,7 +1447,18 @@ Generate two distinct categories of questions. For each question, provide both '
                 },
                 viewResults(jobId) {
                     const result = this.completedJobs.find(j => j.id === jobId);
-                    if (result) { this.activeResult = { ...result }; this.view = 'results'; }
+                    if (result) {
+                        this.activeResult = { ...result };
+                        this.view = 'results';
+                        // Force reactive update for regeneration results
+                        this.$nextTick(() => {
+                            this.forceUpdate();
+                        });
+                    }
+                },
+                forceUpdate() {
+                    // Force Alpine.js to re-evaluate reactive expressions
+                    this.activeResult = { ...this.activeResult };
                 },
                  deleteResult(jobId) {
                     this.completedJobs = this.completedJobs.filter(j => j.id !== jobId);
@@ -1552,6 +1742,44 @@ Generate two distinct categories of questions. For each question, provide both '
                             behavior: 'smooth'
                         });
                     }, 100);
+                },
+
+                // --- TEXT FORMATTING ---
+                formatMatchAnalysis(text) {
+                    if (!text) return '';
+
+                    // Split into sections based on common patterns
+                    let formatted = text
+                        // Format the main score line
+                        .replace(/(\d+)%/, '<span class="text-2xl font-bold text-green-600">$1%</span>')
+
+                        // Format section headers (lines starting with **)
+                        .replace(/\*\*(.*?):\*\*/g, '<h4 class="text-lg font-semibold text-gray-800 mt-4 mb-2 border-b border-gray-200 pb-1">$1</h4>')
+
+                        // Format bullet points
+                        .replace(/^\*\s+(.*?)$/gm, '<div class="mb-2">• <span class="font-medium">$1</span></div>')
+
+                        // Format sub-bullets
+                        .replace(/^\*\s*\*\s*(.*?)$/gm, '<div class="mb-1 ml-4">◦ $1</div>')
+
+                        // Format bold text within content
+                        .replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-gray-900">$1</strong>')
+
+                        // Format italic text
+                        .replace(/\*(.*?)\*/g, '<em class="italic text-gray-700">$1</em>')
+
+                        // Add spacing between paragraphs
+                        .replace(/\n\n/g, '</p><p class="mb-3">')
+
+                        // Clean up any remaining newlines
+                        .replace(/\n/g, '<br>');
+
+                    // Wrap in paragraph tags if not already wrapped
+                    if (!formatted.includes('<p>')) {
+                        formatted = '<p class="mb-3 text-gray-700 leading-relaxed">' + formatted + '</p>';
+                    }
+
+                    return formatted;
                 }
             }
         }

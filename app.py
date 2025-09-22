@@ -327,18 +327,7 @@ CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with t
 
         prompt_template += json_requirement
 
-        # DEBUG: Print the final prompt being sent to AI
-        print(f"\n=== DEBUG: Final prompt for {prompt_key} ===")
-        print(f"Custom prompt provided: {custom_prompts_dict.get(prompt_key, 'None')[:200]}...")
-        print(f"Final prompt length: {len(prompt_template)}")
-        print(f"Contains JSON_STRUCTURE: {'JSON_STRUCTURE' in prompt_template}")
-        print(f"Contains 'JSON object': {'JSON object' in prompt_template}")
-        print(f"Contains 'CRITICAL OUTPUT': {'CRITICAL OUTPUT' in prompt_template}")
-        print("=== First 500 chars of prompt ===")
-        print(prompt_template[:500])
-        print("=== Last 500 chars of prompt ===")
-        print(prompt_template[-500:])
-        print("=== End Debug ===\n")
+   
 
         return prompt_template
 
