@@ -1,3 +1,5 @@
+REM honestly kinda broken and can't be arsed to fix, start_all displays status of each worker but its very wonky so be careful
+
 @echo off
 echo ResumeAI Worker Monitor
 echo =======================
@@ -48,3 +50,4 @@ echo.
 REM Wait 10 seconds before next check
 timeout /t 10 /nobreak > nul
 goto loop
+
