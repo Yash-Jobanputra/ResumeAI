@@ -569,7 +569,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               // Show error message on the page
               chrome.tabs.sendMessage(tabId, {
                 action: 'showCompletionMessage',
-                message: `❌ Auto selection not available for this site.\nSupported sites: LinkedIn, Indeed, HiringCafe, Harri\n💡 Use Create Scrape to add support for this site`,
+                message: `❌ Auto selection not available for this site.\nSupported sites: LinkedIn, Indeed, HiringCafe, Harri\n💡 Use Manual selection or Create Scrape to add support for this site`,
                 type: 'error'
               }).catch(() => {});
 

@@ -268,7 +268,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const isSupported = supportedSites.some(site => hostname.includes(site));
 
       if (!isSupported) {
-        setStatus('No auto-scraper available for this site. Try manual selection.', 'error');
+        setStatus('No auto-scraper available for this site. Try manual selection or create a custom scraper.', 'error');
         return;
       }
 
@@ -281,7 +281,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (chrome.runtime.lastError) {
           setStatus(`Error: ${chrome.runtime.lastError.message}`, 'error');
         } else if (response.status === 'unsupported') {
-          setStatus(`No auto-scraper available for ${response.site}. Try manual selection.`, 'error');
+          setStatus(`No auto-scraper available for ${response.site}. Try manual selection or create a custom scraper.`, 'error');
         } else {
           setStatus(`Auto selection started for ${hostname}...`, 'info');
         }

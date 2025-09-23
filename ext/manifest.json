@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "ResumeAI",
+  "name": "A ResumeAI",
   "version": "1.5",
   "permissions": [
     "storage",

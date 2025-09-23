@@ -350,7 +350,7 @@ function captureElement(e) {
         data: selectedData,
         selectors: capturedSelectors,
         domain: currentDomain,
-        autoSendToApi: false // Don't automatically send to API
+        autoSendToApi: true // Don't automatically send to API
       });
 
       // Show completion message and close
@@ -586,19 +586,25 @@ function getRobustSelector(element) {
 
 function startSelectionProcess() {
   if (selectionMode === 'active') return;
+
+  // Ensure we're in manual selection mode (not create scrape mode)
+  isCreateScrapeMode = false;
+  capturedSelectors = {};
+  currentDomain = '';
+
   injectStyles();
   selectionMode = 'active';
   selectionStep = 'title';
   selectedData = { page_url: window.location.href };
-  
+
   document.addEventListener('mouseover', highlightElement);
   document.addEventListener('click', captureElement, true);
   document.addEventListener('keydown', handleEscapeKey, true);
-  
+
   updateUI('Click to select the JOB TITLE (Press Esc to cancel)', 1);
-  
-  chrome.runtime.sendMessage({ 
-    action: 'manualSelectionStep', 
+
+  chrome.runtime.sendMessage({
+    action: 'manualSelectionStep',
     step: 'Select Job Title',
     progress: { current: 1, total: 3, data: selectedData }
   });
