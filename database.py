@@ -101,3 +101,67 @@ class ScrapedJD(db.Model):
             'user_session_id': self.user_session_id,
             'status': self.status,
         }
+
+# New Model for tracking background jobs to fix regeneration bug
+class Job(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    celery_job_id = db.Column(db.String(100), nullable=False, unique=True)  # Celery task ID
+    job_type = db.Column(db.String(50), nullable=False)  # 'customization', 'interview_prep', 'download'
+    status = db.Column(db.String(50), default='pending')  # 'pending', 'processing', 'completed', 'failed'
+    result_id = db.Column(db.String(100), nullable=True)  # ID of the original result for regeneration
+    parent_job_id = db.Column(db.Integer, db.ForeignKey('job.id'), nullable=True)  # For regeneration jobs
+    user_session_id = db.Column(db.String(100), nullable=False)
+    resume_id = db.Column(db.Integer, db.ForeignKey('resume.id'), nullable=True)
+    company_name = db.Column(db.String(150), nullable=True)
+    job_description = db.Column(db.Text, nullable=True)
+    regenerate_type = db.Column(db.JSON, nullable=True)  # Type of regeneration (paragraphs, cover_letter, etc.)
+    error_message = db.Column(db.Text, nullable=True)
+    created_date = db.Column(db.DateTime, default=datetime.utcnow)
+    started_date = db.Column(db.DateTime, nullable=True)
+    completed_date = db.Column(db.DateTime, nullable=True)
+    result_data = db.Column(db.JSON, nullable=True)  # Store result when completed
+
+    # Relationships
+    resume = db.relationship('Resume', backref='jobs')
+    parent_job = db.relationship('Job', remote_side=[id])
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'celery_job_id': self.celery_job_id,
+            'job_type': self.job_type,
+            'status': self.status,
+            'result_id': self.result_id,
+            'parent_job_id': self.parent_job_id,
+            'user_session_id': self.user_session_id,
+            'resume_id': self.resume_id,
+            'company_name': self.company_name,
+            'job_description': self.job_description,
+            'regenerate_type': self.regenerate_type,
+            'error_message': self.error_message,
+            'created_date': self.created_date.isoformat() if self.created_date else None,
+            'started_date': self.started_date.isoformat() if self.started_date else None,
+            'completed_date': self.completed_date.isoformat() if self.completed_date else None,
+            'result_data': self.result_data,
+        }
+
+    @classmethod
+    def get_by_celery_id(cls, celery_job_id):
+        """Get job by Celery task ID"""
+        return cls.query.filter_by(celery_job_id=celery_job_id).first()
+
+    @classmethod
+    def get_active_jobs(cls, user_session_id):
+        """Get all active (non-completed) jobs for a user session"""
+        return cls.query.filter_by(
+            user_session_id=user_session_id,
+            status__in=['pending', 'processing']
+        ).order_by(cls.created_date.desc()).all()
+
+    @classmethod
+    def get_completed_jobs(cls, user_session_id):
+        """Get all completed jobs for a user session"""
+        return cls.query.filter_by(
+            user_session_id=user_session_id,
+            status='completed'
+        ).order_by(cls.completed_date.desc()).all()
