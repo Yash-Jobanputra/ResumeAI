@@ -34,6 +34,7 @@ class Resume(db.Model):
 class Application(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     company_name = db.Column(db.String(150), nullable=False)
+    job_title = db.Column(db.String(250), nullable=True)  # Job title from scraped job posting
     job_description = db.Column(db.Text, nullable=False)
     status = db.Column(db.String(50), default='not_applied')
     match_score = db.Column(db.Integer)
@@ -51,6 +52,7 @@ class Application(db.Model):
         return {
             'id': self.id,
             'company_name': self.company_name,
+            'job_title': self.job_title,
             'job_description': self.job_description,
             'status': self.status,
             'match_score': self.match_score,

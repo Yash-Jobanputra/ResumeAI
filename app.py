@@ -463,22 +463,84 @@ CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with t
         except Exception as e:
             raise Exception(f"Error updating DOCX: {str(e)}")
 
+    def create_cover_letter_docx(self, cover_letter_text, company_name, user_name):
+        """Create a DOCX document from cover letter text - just plain text, nothing else"""
+        try:
+            doc = Document()
+
+            # Add cover letter content as plain text - no headers, footers, or formatting
+            # Split into paragraphs and add each one
+            paragraphs = cover_letter_text.split('\n\n')
+            for para_text in paragraphs:
+                if para_text.strip():
+                    para = doc.add_paragraph()
+                    para.add_run(para_text.strip())
+
+            # Save to temporary file
+            temp_path = tempfile.mktemp(suffix='.docx')
+            doc.save(temp_path)
+            return temp_path
+
+        except Exception as e:
+            raise Exception(f"Error creating cover letter DOCX: {str(e)}")
+
     def convert_docx_to_pdf(self, docx_path, output_filename):
         try:
+            # Initialize COM with better error handling
             pythoncom.CoInitialize()
+
+            # Import docx2pdf and perform conversion
             from docx2pdf import convert
             pdf_filename = f"{output_filename}.pdf"
             pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], pdf_filename)
+
+            print(f"Attempting PDF conversion: {docx_path} -> {pdf_path}")
+
+            # Perform the conversion
             convert(docx_path, pdf_path)
-            return pdf_path, pdf_filename
-        except Exception as e:
-            print(f"PDF conversion failed: {e}. Falling back to DOCX.")
+
+            # Verify the PDF was created successfully
+            if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
+                print(f"PDF conversion successful: {pdf_path}")
+                return pdf_path, pdf_filename
+            else:
+                raise Exception("PDF file was not created or is empty")
+
+        except ImportError as e:
+            print(f"docx2pdf import failed: {e}. Falling back to DOCX.")
             docx_filename = f"{output_filename}.docx"
             final_docx_path = os.path.join(app.config['UPLOAD_FOLDER'], docx_filename)
             shutil.copy2(docx_path, final_docx_path)
             return final_docx_path, docx_filename
+
+        except Exception as e:
+            print(f"PDF conversion failed: {e}. Falling back to DOCX.")
+            print(f"Error type: {type(e).__name__}")
+            print(f"Error details: {str(e)}")
+
+            # Try to clean up any partially created files
+            try:
+                pdf_filename = f"{output_filename}.pdf"
+                pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], pdf_filename)
+                if os.path.exists(pdf_path):
+                    os.remove(pdf_path)
+                    print(f"Cleaned up failed PDF file: {pdf_path}")
+            except Exception as cleanup_error:
+                print(f"Warning: Could not clean up failed PDF file: {cleanup_error}")
+
+            # Fallback to DOCX
+            docx_filename = f"{output_filename}.docx"
+            final_docx_path = os.path.join(app.config['UPLOAD_FOLDER'], docx_filename)
+            shutil.copy2(docx_path, final_docx_path)
+            return final_docx_path, docx_filename
+
         finally:
-            pythoncom.CoUninitialize()
+            # Always uninitialize COM
+            try:
+                pythoncom.CoUninitialize()
+                print("COM uninitialized successfully")
+            except Exception as e:
+                print(f"Warning: COM uninitialization failed: {e}")
 
 processor = ResumeProcessor()
 
@@ -739,6 +801,7 @@ def save_application():
     resume = Resume.query.get_or_404(data.get('resume_id'))
     new_app = Application(
         company_name=data.get('company_name'),
+        job_title=data.get('job_title'),  # Add job title from scraped JD
         job_description=data.get('job_description', ''),
         status=data.get('status', 'not_applied'),
         match_score=data.get('match_score'),
@@ -947,6 +1010,41 @@ def download_resume_file():
 
     task = celery.send_task('celery_worker.create_download_file_task', args=[data])
     return jsonify({'job_id': task.id})
+
+@app.route('/api/download_cover_letter', methods=['POST'])
+def download_cover_letter():
+    try:
+        data = request.get_json()
+        cover_letter_text = data.get('cover_letter_text')
+        company_name = data.get('company_name', 'Unknown Company')
+        user_name = f"{session.get('user_first_name', '')} {session.get('user_last_name', '')}".strip()
+
+        if not cover_letter_text:
+            return jsonify({'error': 'Cover letter text is required'}), 400
+
+        if not user_name:
+            user_name = 'Your Name'
+
+        # Create the DOCX file
+        docx_path = processor.create_cover_letter_docx(cover_letter_text, company_name, user_name)
+
+        # Generate filename
+        safe_company_name = company_name.replace(' ', '_').replace('/', '_')
+        filename = f"{user_name.replace(' ', '_')}_{safe_company_name}_Cover_Letter.docx"
+
+        # Move to uploads folder with proper name
+        final_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        shutil.move(docx_path, final_path)
+
+        return jsonify({
+            'success': True,
+            'download_url': f'/download/{filename}',
+            'filename': filename
+        })
+
+    except Exception as e:
+        print(f"Error creating cover letter DOCX: {e}")
+        return jsonify({'error': f'Failed to create cover letter document: {str(e)}'}), 500
 
 @app.route('/api/job-status/<job_id>', methods=['GET'])
 def get_job_status(job_id):

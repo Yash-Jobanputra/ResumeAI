@@ -552,7 +552,7 @@
                                 <tr class="hover:bg-gray-50">
                                     <td @click="viewApplicationDetails(app.id)" class="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600 hover:text-blue-800 cursor-pointer" x-text="app.company_name"></td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        <span x-text="app.job_title || 'N/A'" :title="app.job_title ? 'From scraped job posting' : 'Job title not available'"></span>
+                                        <span x-text="app.job_title || 'N/A'" :title="app.job_title ? 'From scraped job posting' : 'Job title not available'" x-init="console.log('DEBUG: Application job_title:', app.job_title, 'for app ID:', app.id)"></span>
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="app.match_score ? app.match_score + '%' : 'N/A'"></td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm">
@@ -617,11 +617,18 @@
                     <div class="flex flex-col">
                         <div class="flex justify-between items-center mb-4">
                              <h3 class="text-xl font-semibold">Generated Cover Letter</h3>
-                             <button @click="copyToClipboard(activeResult.cover_letter)" title="Copy to clipboard" class="p-1 text-gray-400 hover:text-gray-700">
-                                <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                                  <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
-                                </svg>
-                             </button>
+                             <div class="flex items-center space-x-2">
+                                 <button @click="copyToClipboard(activeResult.cover_letter)" title="Copy to clipboard" class="p-1 text-gray-400 hover:text-gray-700">
+                                    <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                      <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
+                                    </svg>
+                                 </button>
+                                 <button @click="downloadCoverLetter(activeResult.cover_letter, activeResult.company_name)" title="Download as DOCX" class="p-1 text-gray-400 hover:text-gray-700">
+                                    <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                      <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m.75 12l3 3m0 0l3-3m-3 3v-6m-6 6h12a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 7.5v9a2.25 2.25 0 002.25 2.25z" />
+                                    </svg>
+                                 </button>
+                             </div>
                         </div>
                         <div class="border rounded-lg p-4 bg-gray-50 flex-grow overflow-y-auto min-h-[50vh]">
                             <p class="text-sm text-gray-700 whitespace-pre-wrap" x-text="activeResult.cover_letter"></p>
@@ -693,11 +700,18 @@
                     <div class="flex flex-col">
                         <div class="flex justify-between items-center mb-4">
                              <h3 class="text-xl font-semibold">Saved Cover Letter</h3>
-                              <button @click="copyToClipboard(activeApplication.cover_letter)" title="Copy to clipboard" class="p-1 text-gray-400 hover:text-gray-700">
-                                <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                                  <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
-                                </svg>
-                             </button>
+                             <div class="flex items-center space-x-2">
+                                 <button @click="copyToClipboard(activeApplication.cover_letter)" title="Copy to clipboard" class="p-1 text-gray-400 hover:text-gray-700">
+                                    <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                      <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
+                                    </svg>
+                                 </button>
+                                 <button @click="downloadCoverLetter(activeApplication.cover_letter, activeApplication.company_name)" title="Download as DOCX" class="p-1 text-gray-400 hover:text-gray-700">
+                                    <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                      <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m.75 12l3 3m0 0l3-3m-3 3v-6m-6 6h12a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 7.5v9a2.25 2.25 0 002.25 2.25z" />
+                                    </svg>
+                                 </button>
+                             </div>
                         </div>
                         <div class="border rounded-lg p-4 bg-gray-50 flex-grow overflow-y-auto min-h-[50vh]">
                             <p class="text-sm text-gray-700 whitespace-pre-wrap" x-text="activeApplication.cover_letter"></p>
@@ -1702,19 +1716,29 @@ Generate two distinct categories of questions. For each question, provide both '
                             customized_paragraphs: this.activeResult.customized_paragraphs
                         };
 
-                        // Add job posting URL if this came from a scraped job
+                        // Add job posting URL and title if this came from a scraped job
                         if (this.activeResult.scraped_jd_id) {
                             console.log('DEBUG: Saving application with scraped_jd_id:', this.activeResult.scraped_jd_id);
-                            console.log('DEBUG: Available scraped JDs:', this.scrapedJDs.map(jd => ({ id: jd.id, url: jd.page_url })));
+                            console.log('DEBUG: Available scraped JDs:', this.scrapedJDs.map(jd => ({ id: jd.id, url: jd.page_url, title: jd.job_title })));
 
                             const scrapedJob = this.scrapedJDs.find(jd => jd.id === this.activeResult.scraped_jd_id);
                             console.log('DEBUG: Found scraped job:', scrapedJob);
+                            console.log('DEBUG: Scraped job details:', scrapedJob ? JSON.stringify(scrapedJob, null, 2) : 'null');
 
-                            if (scrapedJob && scrapedJob.page_url) {
-                                payload.job_posting_url = scrapedJob.page_url;
-                                console.log('DEBUG: Adding job posting URL:', scrapedJob.page_url);
+                            if (scrapedJob) {
+                                if (scrapedJob.page_url) {
+                                    payload.job_posting_url = scrapedJob.page_url;
+                                    console.log('DEBUG: Adding job posting URL:', scrapedJob.page_url);
+                                }
+                                if (scrapedJob.job_title) {
+                                    payload.job_title = scrapedJob.job_title;
+                                    console.log('DEBUG: Adding job title:', scrapedJob.job_title);
+                                } else {
+                                    console.log('DEBUG: Scraped job found but no job_title property');
+                                    console.log('DEBUG: Available properties:', Object.keys(scrapedJob));
+                                }
                             } else {
-                                console.log('DEBUG: No URL found for scraped job');
+                                console.log('DEBUG: No scraped job found with ID:', this.activeResult.scraped_jd_id);
                             }
                         } else {
                             console.log('DEBUG: No scraped_jd_id found in activeResult');
@@ -1742,6 +1766,42 @@ Generate two distinct categories of questions. For each question, provide both '
                         };
                         await fetch('/api/download_resume', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
                     } catch (error) { this.showToast('error', 'Failed to queue download.'); }
+                },
+                async downloadCoverLetter(coverLetterText, companyName) {
+                    this.showToast('info', 'Preparing cover letter download...');
+                    try {
+                        const payload = {
+                            cover_letter_text: coverLetterText,
+                            company_name: companyName
+                        };
+                        const response = await fetch('/api/download_cover_letter', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify(payload)
+                        });
+
+                        if (!response.ok) {
+                            const errorData = await response.json();
+                            throw new Error(errorData.error || 'Failed to create cover letter document');
+                        }
+
+                        const data = await response.json();
+                        if (data.success) {
+                            this.showToast('success', 'Cover letter downloaded!');
+                            // Create a temporary link to trigger download
+                            const link = document.createElement('a');
+                            link.href = data.download_url;
+                            link.download = data.filename;
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+                        } else {
+                            throw new Error('Failed to create cover letter document');
+                        }
+                    } catch (error) {
+                        console.error('Error downloading cover letter:', error);
+                        this.showToast('error', error.message || 'Failed to download cover letter');
+                    }
                 },
                 
                 // --- APPLICATION MANAGEMENT ---
@@ -1924,7 +1984,7 @@ Generate two distinct categories of questions. For each question, provide both '
                     if (job.scraped_jd_id) {
                         await this.getScrapedJDs();
                     }
-
+ng 
                     // Stop polling if no more active jobs
                     if (this.activeJobs.length === 0) {
                         this.stopJobPolling();
