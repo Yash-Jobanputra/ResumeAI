@@ -788,6 +788,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // Execute custom scraper sent from background script
     console.log('Content Script: Executing custom scraper', request.scraper.name);
     console.log('Content Script: Using selectors:', request.scraper.selectors);
+    console.log('Content Script: Current URL:', window.location.href);
+    console.log('Content Script: Current domain:', window.location.hostname);
 
     let result = null;
     try {
@@ -804,9 +806,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       const companySelector = selectors.company_name || selectors.company;
       const descriptionSelector = selectors.job_description || selectors.description;
 
+      console.log('Content Script: Attempting to find elements with selectors:');
+      console.log('  - Title:', titleSelector);
+      console.log('  - Company:', companySelector);
+      console.log('  - Description:', descriptionSelector);
+
       try {
         titleEl = document.querySelector(titleSelector);
         console.log('Content Script: Title element found:', titleEl ? 'YES' : 'NO', 'Selector:', titleSelector);
+        if (titleEl) {
+          console.log('Content Script: Title element details:', {
+            tagName: titleEl.tagName,
+            id: titleEl.id,
+            className: titleEl.className,
+            textContent: titleEl.textContent?.substring(0, 100) + '...'
+          });
+        }
       } catch (e) {
         console.log('Content Script: Error finding title element:', e);
       }
@@ -814,6 +829,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       try {
         companyEl = document.querySelector(companySelector);
         console.log('Content Script: Company element found:', companyEl ? 'YES' : 'NO', 'Selector:', companySelector);
+        if (companyEl) {
+          console.log('Content Script: Company element details:', {
+            tagName: companyEl.tagName,
+            id: companyEl.id,
+            className: companyEl.className,
+            textContent: companyEl.textContent?.substring(0, 100) + '...'
+          });
+        }
       } catch (e) {
         console.log('Content Script: Error finding company element:', e);
       }
@@ -821,6 +844,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       try {
         descriptionEl = document.querySelector(descriptionSelector);
         console.log('Content Script: Description element found:', descriptionEl ? 'YES' : 'NO', 'Selector:', descriptionSelector);
+        if (descriptionEl) {
+          console.log('Content Script: Description element details:', {
+            tagName: descriptionEl.tagName,
+            id: descriptionEl.id,
+            className: descriptionEl.className,
+            textContent: descriptionEl.textContent?.substring(0, 100) + '...'
+          });
+        }
       } catch (e) {
         console.log('Content Script: Error finding description element:', e);
       }
@@ -832,7 +863,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
       if (missing.length) {
         console.log('Content Script: Missing elements:', missing);
-        result = { error: `Missing elements: ${missing.join(', ')}. Custom scraper failed.` };
+        console.log('Content Script: Available elements on page:');
+        console.log('  - H1 elements:', document.querySelectorAll('h1').length);
+        console.log('  - H2 elements:', document.querySelectorAll('h2').length);
+        console.log('  - Elements with "title" in class:', document.querySelectorAll('[class*="title"]').length);
+        console.log('  - Elements with "company" in class:', document.querySelectorAll('[class*="company"]').length);
+        console.log('  - Elements with "description" in class:', document.querySelectorAll('[class*="description"]').length);
+
+        result = { error: `Missing elements: ${missing.join(', ')}. Custom scraper failed. Check if page structure has changed.` };
       } else {
         console.log('Content Script: All elements found successfully');
         result = {
@@ -845,7 +883,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       }
     } catch (error) {
       console.log('Content Script: Error executing custom scraper:', error);
-      result = { error: error.toString() };
+      result = { error: `Custom scraper error: ${error.toString()}` };
     }
 
     console.log('Content Script: Custom scraper result', result);

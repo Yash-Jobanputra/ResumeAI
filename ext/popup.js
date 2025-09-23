@@ -25,11 +25,17 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!tab || !tab.url) return;
 
     const url = new URL(tab.url);
-    const domain = url.hostname.replace('www.', '');
+    const domain = url.hostname.replace('www.', '').toLowerCase();
+
+    console.log('Popup: Checking existing scrapers for domain:', domain);
+    console.log('Popup: Original URL:', tab.url);
+    console.log('Popup: Hostname:', url.hostname);
 
     chrome.storage.local.get(['customScrapers'], (result) => {
       const customScrapers = result.customScrapers || {};
       const domainScrapers = customScrapers[domain];
+
+      console.log('Popup: Found scrapers for domain:', domain, domainScrapers ? domainScrapers.scrapers?.length || 0 : 0);
 
       if (domainScrapers && domainScrapers.scrapers && domainScrapers.scrapers.length > 0) {
         const scraperCount = domainScrapers.scrapers.length;
@@ -224,26 +230,62 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // Check if the site is supported
     const url = new URL(tab.url);
     const hostname = url.hostname.replace('www.', '').toLowerCase();
-    const supportedSites = ['linkedin.com', 'indeed.com', 'hiringcafe', 'hiring.cafe', 'hiring-cafe', 'harri.com'];
-    const isSupported = supportedSites.some(site => hostname.includes(site));
 
-    if (!isSupported) {
-      setStatus('No auto-scraper available for this site. Try manual selection.', 'error');
-      return;
-    }
+    console.log('Popup: Auto scrape clicked for domain:', hostname);
+    console.log('Popup: Original URL:', tab.url);
 
-    // Trigger auto selection via background script
-    chrome.runtime.sendMessage({ action: 'triggerAutoSelection' }, (response) => {
-      if (chrome.runtime.lastError) {
-        setStatus(`Error: ${chrome.runtime.lastError.message}`, 'error');
-      } else if (response.status === 'unsupported') {
-        setStatus(`No auto-scraper available for ${response.site}. Try manual selection.`, 'error');
-      } else {
+    // Check for custom scrapers first
+    chrome.storage.local.get(['customScrapers'], (result) => {
+      const customScrapers = result.customScrapers || {};
+      const domainScrapers = customScrapers[hostname];
+
+      console.log('Popup: Checking for custom scrapers for domain:', hostname);
+      console.log('Popup: Found scrapers:', domainScrapers ? domainScrapers.scrapers?.length || 0 : 0);
+
+      // If custom scrapers exist, use them
+      if (domainScrapers && domainScrapers.scrapers && domainScrapers.scrapers.length > 0) {
+        console.log('Popup: Found custom scrapers, proceeding with auto scrape');
         setStatus(`Auto selection started for ${hostname}...`, 'info');
+
+        // Trigger auto selection via background script
+        chrome.runtime.sendMessage({ action: 'triggerAutoSelection' }, (response) => {
+          if (chrome.runtime.lastError) {
+            setStatus(`Error: ${chrome.runtime.lastError.message}`, 'error');
+          } else if (response.status === 'unsupported') {
+            setStatus(`No auto-scraper available for ${response.site}. Try manual selection.`, 'error');
+          } else {
+            setStatus(`Auto selection started for ${hostname}...`, 'info');
+          }
+        });
+        return;
       }
+
+      // If no custom scrapers, check for built-in support
+      console.log('Popup: No custom scrapers found, checking built-in support');
+      const supportedSites = ['linkedin.com', 'indeed.com', 'hiringcafe', 'hiring.cafe', 'hiring-cafe', 'harri.com'];
+      const isSupported = supportedSites.some(site => hostname.includes(site));
+
+      if (!isSupported) {
+        setStatus('No auto-scraper available for this site. Try manual selection.', 'error');
+        return;
+      }
+
+      // Use built-in scraper
+      console.log('Popup: Using built-in scraper for supported site');
+      setStatus(`Auto selection started for ${hostname}...`, 'info');
+
+      // Trigger auto selection via background script
+      chrome.runtime.sendMessage({ action: 'triggerAutoSelection' }, (response) => {
+        if (chrome.runtime.lastError) {
+          setStatus(`Error: ${chrome.runtime.lastError.message}`, 'error');
+        } else if (response.status === 'unsupported') {
+          setStatus(`No auto-scraper available for ${response.site}. Try manual selection.`, 'error');
+        } else {
+          setStatus(`Auto selection started for ${hostname}...`, 'info');
+        }
+      });
     });
   });
 
@@ -278,12 +320,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const url = new URL(tab.url);
-    const domain = url.hostname.replace('www.', '');
+    const domain = url.hostname.replace('www.', '').toLowerCase();
+
+    console.log('Popup: Creating scraper for domain:', domain);
+    console.log('Popup: Original URL:', tab.url);
+    console.log('Popup: Hostname:', url.hostname);
 
     // Check if we already have scrapers for this domain
     chrome.storage.local.get(['customScrapers'], (result) => {
       const customScrapers = result.customScrapers || {};
       const domainScrapers = customScrapers[domain];
+
+      console.log('Popup: Existing scrapers for domain:', domain, domainScrapers ? domainScrapers.scrapers?.length || 0 : 0);
       const isAddingFallback = domainScrapers && domainScrapers.scrapers && domainScrapers.scrapers.length > 0;
 
       // Send message to background script to trigger enhanced manual selection

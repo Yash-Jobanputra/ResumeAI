@@ -511,24 +511,52 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const hostname = new URL(url).hostname.replace('www.', '').toLowerCase();
 
         console.log('ResumeAI Background: Checking for scrapers for domain', hostname);
+        console.log('ResumeAI Background: Original URL:', url);
+        console.log('ResumeAI Background: Hostname:', new URL(url).hostname);
 
         // Check for custom scrapers first
         chrome.storage.local.get(['customScrapers'], (result) => {
           const customScrapers = result.customScrapers || {};
-          const domainScrapers = customScrapers[hostname];
+          let domainScrapers = customScrapers[hostname];
+          let actualDomain = hostname;
 
+          console.log('ResumeAI Background: === AUTO SCRAPE DEBUG INFO ===');
+          console.log('ResumeAI Background: Full storage result:', result);
+          console.log('ResumeAI Background: Custom scrapers object:', customScrapers);
           console.log('ResumeAI Background: Checking storage for domain', hostname);
-          console.log('ResumeAI Background: Available custom scrapers:', Object.keys(customScrapers));
+          console.log('ResumeAI Background: Available custom scrapers keys:', Object.keys(customScrapers));
           console.log('ResumeAI Background: Domain scrapers found:', domainScrapers);
+          console.log('ResumeAI Background: Number of scrapers for this domain:', domainScrapers ? domainScrapers.scrapers?.length || 0 : 0);
+
+          // Debug: Show all scrapers in detail
+          Object.keys(customScrapers).forEach(key => {
+            const scrapers = customScrapers[key];
+            console.log(`ResumeAI Background: Domain "${key}" has ${scrapers.scrapers?.length || 0} scrapers:`, scrapers.scrapers);
+          });
+
+          // If no scrapers found, try the alternative domain format (with/without www)
+          if (!domainScrapers || !domainScrapers.scrapers || domainScrapers.scrapers.length === 0) {
+            const alternativeDomain = hostname.startsWith('www.') ? hostname.substring(4) : `www.${hostname}`;
+            console.log('ResumeAI Background: Trying alternative domain format:', alternativeDomain);
+            domainScrapers = customScrapers[alternativeDomain];
+            actualDomain = alternativeDomain;
+
+            if (domainScrapers && domainScrapers.scrapers && domainScrapers.scrapers.length > 0) {
+              console.log('ResumeAI Background: Found scrapers under alternative domain:', alternativeDomain);
+              console.log('ResumeAI Background: Number of scrapers for alternative domain:', domainScrapers.scrapers.length);
+            }
+          }
 
           if (domainScrapers && domainScrapers.scrapers && domainScrapers.scrapers.length > 0) {
-            console.log('ResumeAI Background: Found custom scrapers for domain', hostname, domainScrapers.scrapers.length);
-            console.log('ResumeAI Background: Using custom scrapers for', hostname);
+            console.log('ResumeAI Background: Found custom scrapers for domain', actualDomain, domainScrapers.scrapers.length);
+            console.log('ResumeAI Background: Using custom scrapers for', actualDomain);
 
             // Try custom scrapers first
-            tryCustomScrapers(tabId, hostname, domainScrapers.scrapers, 0);
+            tryCustomScrapers(tabId, actualDomain, domainScrapers.scrapers, 0);
           } else {
-            console.log('ResumeAI Background: No custom scrapers found for', hostname);
+            console.log('ResumeAI Background: === NO CUSTOM SCRAPERS FOUND ===');
+            console.log('ResumeAI Background: No custom scrapers found for', hostname, 'or alternative domain');
+            console.log('ResumeAI Background: This means the scraper was not saved properly or storage is corrupted');
             console.log('ResumeAI Background: Checking for built-in scrapers...');
 
             // Fall back to built-in scrapers
@@ -572,6 +600,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 // Helper function to try custom scrapers in order
 function tryCustomScrapers(tabId, hostname, scrapers, index) {
+  console.log('ResumeAI Background: tryCustomScrapers called with index', index, 'of', scrapers.length, 'scrapers');
+
   if (index >= scrapers.length) {
     console.log('ResumeAI Background: All custom scrapers failed, trying built-in scraper');
     tryBuiltInScraper(tabId, hostname);
@@ -585,7 +615,7 @@ function tryCustomScrapers(tabId, hostname, scrapers, index) {
   // Show progress message
   chrome.tabs.sendMessage(tabId, {
     action: 'showCompletionMessage',
-    message: `🤖 Running custom scraper for ${hostname}...`,
+    message: `🤖 Running custom scraper "${scraper.name}" for ${hostname}...`,
     type: 'info'
   }).catch(() => {});
 
@@ -597,6 +627,8 @@ function tryCustomScrapers(tabId, hostname, scrapers, index) {
     hostname: hostname
   }, (response) => {
     console.log('ResumeAI Background: Content script response:', response);
+
+    // Check for chrome runtime errors first
     if (chrome.runtime.lastError) {
       console.error('ResumeAI Background: Error sending custom scraper to content script', chrome.runtime.lastError);
       // Try next scraper
@@ -604,7 +636,14 @@ function tryCustomScrapers(tabId, hostname, scrapers, index) {
       return;
     }
 
-    if (response && response.result) {
+    // Check if we got a valid response
+    if (!response) {
+      console.log('ResumeAI Background: No response from content script, trying next scraper');
+      tryCustomScrapers(tabId, hostname, scrapers, index + 1);
+      return;
+    }
+
+    if (response.result) {
       const result = response.result;
 
       if (result && !result.error) {
@@ -682,7 +721,9 @@ function tryCustomScrapers(tabId, hostname, scrapers, index) {
           });
         });
       } else {
-        console.log('ResumeAI Background: Custom scraper failed, trying next one');
+        console.log('ResumeAI Background: Custom scraper failed with error:', result?.error);
+        console.log('ResumeAI Background: Trying next scraper...');
+
         // Update failure rate
         scraper.successRate = Math.max(0.0, scraper.successRate - 0.2);
 
