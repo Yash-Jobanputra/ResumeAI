@@ -1,4 +1,3 @@
-REM USAGE: start_all.bat 5 = load with 5 workers. Default is 3, can change at line 7.
 @echo off
 setlocal enabledelayedexpansion
 

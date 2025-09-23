@@ -5,11 +5,57 @@ import os
 import time
 import traceback
 import redis
+import tempfile
+from docx import Document
+import pythoncom
 from flask_socketio import SocketIO
 from app import celery, ResumeProcessor, Resume, db, Application, ScrapedJD
 
 # Initialize SocketIO with Redis message queue for cross-process communication
 socketio = SocketIO(message_queue='redis://localhost:6379/0')
+
+def initialize_worker_system():
+    """Initialize system components in Celery worker to eliminate first-request delays"""
+    print("🚀 Starting Celery worker system initialization...")
+
+    try:
+        # 1. Initialize Python COM for DOCX processing (main culprit for slow first request)
+        print("📄 Initializing Python COM in worker...")
+        pythoncom.CoInitialize()
+        # Create a dummy document to force COM initialization
+        try:
+            temp_doc = Document()
+            temp_doc.add_paragraph("Worker initialization test")
+            temp_path = tempfile.mktemp(suffix='.docx')
+            temp_doc.save(temp_path)
+            os.remove(temp_path)
+            print("✅ Worker COM initialization complete")
+        except Exception as e:
+            print(f"⚠️ Worker COM initialization warning: {e}")
+
+        # 2. Pre-initialize heavy modules
+        print("📦 Pre-loading heavy modules in worker...")
+        try:
+            # Import modules that might be slow on first use
+            import docx2pdf
+            print("✅ Worker heavy modules pre-loaded")
+        except Exception as e:
+            print(f"⚠️ Worker module pre-loading warning: {e}")
+
+        print("🎉 Celery worker initialization complete")
+
+    except Exception as e:
+        print(f"❌ Celery worker initialization failed: {e}")
+    finally:
+        # Clean up COM
+        try:
+            pythoncom.CoUninitialize()
+        except:
+            pass
+
+# Initialize worker system immediately when worker starts
+initialize_worker_system()
+
 processor = ResumeProcessor()
 
 @celery.task(bind=True)

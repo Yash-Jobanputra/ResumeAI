@@ -83,25 +83,45 @@ def calculate_file_hash(file_path):
         return None
 
 def get_cached_resume_content(file_hash):
-    """Get cached resume content from Redis"""
+    """Get cached resume content from Redis with error handling"""
+    if not file_hash:
+        return None
     try:
         cached_data = redis_client.get(f"resume_content:{file_hash}")
         if cached_data:
             return json.loads(cached_data)
+    except json.JSONDecodeError as e:
+        print(f"Error decoding cached JSON for hash {file_hash}: {e}")
+        # Delete corrupted cache entry
+        try:
+            redis_client.delete(f"resume_content:{file_hash}")
+        except:
+            pass
     except Exception as e:
-        print(f"Error retrieving cached content: {e}")
+        print(f"Error retrieving cached content for hash {file_hash}: {e}")
     return None
 
 def set_cached_resume_content(file_hash, content):
-    """Cache resume content in Redis with TTL"""
+    """Cache resume content in Redis with TTL and error handling"""
+    if not file_hash or not content:
+        return
     try:
         redis_client.setex(
             f"resume_content:{file_hash}",
-            3600,  # 1 hour TTL
-            json.dumps(content)
+            7200,  # 2 hour TTL (increased from 1 hour)
+            json.dumps(content, ensure_ascii=False)
         )
     except Exception as e:
-        print(f"Error caching content: {e}")
+        print(f"Error caching content for hash {file_hash}: {e}")
+
+def clear_resume_cache(file_hash):
+    """Clear cached resume content from Redis"""
+    if not file_hash:
+        return
+    try:
+        redis_client.delete(f"resume_content:{file_hash}")
+    except Exception as e:
+        print(f"Error clearing cache for hash {file_hash}: {e}")
 
 class ResumeProcessor:
     def __init__(self):
@@ -462,10 +482,100 @@ CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with t
 
 processor = ResumeProcessor()
 
+def initialize_system():
+    """Initialize system components in background to eliminate first-request delays"""
+    import threading
+    import time
+
+    def background_init():
+        print("🚀 Starting background system initialization...")
+        start_time = time.time()
+
+        try:
+            # 1. Initialize Python COM for DOCX processing (main culprit for slow first request)
+            print("📄 Initializing Python COM...")
+            pythoncom.CoInitialize()
+            # Create a dummy document to force COM initialization
+            try:
+                temp_doc = Document()
+                temp_doc.add_paragraph("Initialization test")
+                temp_path = tempfile.mktemp(suffix='.docx')
+                temp_doc.save(temp_path)
+                os.remove(temp_path)
+                print("✅ COM initialization complete")
+            except Exception as e:
+                print(f"⚠️ COM initialization warning: {e}")
+
+            # 2. Warm up database connections
+            print("🗄️ Warming up database connections...")
+            try:
+                with app.app_context():
+                    # Force database connection initialization
+                    db.engine.connect()
+                    print("✅ Database connection pool initialized")
+            except Exception as e:
+                print(f"⚠️ Database initialization warning: {e}")
+
+            # 3. Test Redis connection
+            print("🔴 Testing Redis connection...")
+            try:
+                redis_client.ping()
+                print("✅ Redis connection verified")
+            except Exception as e:
+                print(f"⚠️ Redis connection warning: {e}")
+
+            # 4. Pre-initialize any heavy imports
+            print("📦 Pre-loading heavy modules...")
+            try:
+                # Import modules that might be slow on first use
+                import docx2pdf
+                print("✅ Heavy modules pre-loaded")
+            except Exception as e:
+                print(f"⚠️ Module pre-loading warning: {e}")
+
+            elapsed = time.time() - start_time
+            print(f"🎉 Background initialization complete in {elapsed:.2f} seconds")
+
+        except Exception as e:
+            print(f"❌ Background initialization failed: {e}")
+        finally:
+            # Clean up COM
+            try:
+                pythoncom.CoUninitialize()
+            except:
+                pass
+
+    # Start background initialization in a separate thread
+    init_thread = threading.Thread(target=background_init, daemon=True)
+    init_thread.start()
+    print("🔄 Background initialization started (non-blocking)")
+
+# Initialize system immediately when module loads
+initialize_system()
+
 @app.before_request
 def before_request_func():
     if 'user_session_id' not in session:
         session['user_session_id'] = str(uuid.uuid4())
+
+@socketio.on('connect')
+def handle_connect():
+    print(f"SocketIO client connected: {request.sid}")
+    if 'user_session_id' in session:
+        join_room(session['user_session_id'])
+        socketio.emit('session_id', {'id': session['user_session_id']})
+        print(f"Joined room: {session['user_session_id']}")
+
+        # Notify client that system is ready (or will be soon)
+        # Use a small delay to ensure the client is ready to receive the message
+        @socketio.event
+        def notify_system_ready():
+            socketio.emit('system_status', {
+                'status': 'ready',
+                'message': 'System initialization complete - Fast downloads enabled!'
+            }, room=session['user_session_id'])
+
+        socketio.call_later(0.5, notify_system_ready)
 
 @socketio.on('connect')
 def handle_connect():
@@ -572,20 +682,20 @@ def get_resume_details(resume_id):
     details = resume.to_dict()
 
     try:
+        # Priority 1: Use cached data from database if available
         if resume.structured_text and 'paragraphs' in resume.structured_text:
-            # Use cached data if available
             details['paragraphs'] = resume.structured_text['paragraphs']
         else:
-            # Check cache first before parsing
+            # Priority 2: Check Redis cache first before parsing
             if resume.file_hash:
                 cached_content = get_cached_resume_content(resume.file_hash)
                 if cached_content:
                     details['paragraphs'] = cached_content.get('paragraphs', [])
-                    # Update the database with cached content
+                    # Update the database with cached content for future use
                     resume.structured_text = cached_content
                     db.session.commit()
                 else:
-                    # Parse and cache the document
+                    # Priority 3: Parse once and cache the result
                     resume_content = processor.extract_text_from_docx(resume.original_file_path)
                     details['paragraphs'] = resume_content.get('paragraphs', [])
                     if resume.file_hash:
@@ -593,12 +703,12 @@ def get_resume_details(resume_id):
                         resume.structured_text = resume_content
                         db.session.commit()
             else:
-                # Fallback to direct parsing if no hash
+                # Priority 4: Fallback to direct parsing if no hash (should be rare)
                 resume_content = processor.extract_text_from_docx(resume.original_file_path)
                 details['paragraphs'] = resume_content.get('paragraphs', [])
     except Exception as e:
         details['paragraphs'] = []
-        details['error'] = f"Could not read DOCX file: {e}"
+        details['error'] = f"Could not read DOCX file: {str(e)}"
     return jsonify(details)
 
 @app.route('/api/resumes/<int:resume_id>/selections', methods=['PUT'])
@@ -647,6 +757,50 @@ def save_application():
 def get_applications():
     # Use optimized query with eager loading to avoid N+1 queries
     apps = Application.get_with_resume(session.get('user_session_id'))
+
+    # Apply filters based on query parameters
+    company_filter = request.args.get('company', '').strip()
+    status_filter = request.args.get('status', '').strip()
+    min_score = request.args.get('min_score', '').strip()
+    max_score = request.args.get('max_score', '').strip()
+    from_date = request.args.get('from_date', '').strip()
+    to_date = request.args.get('to_date', '').strip()
+
+    # Filter applications
+    if company_filter:
+        apps = [app for app in apps if company_filter.lower() in app.company_name.lower()]
+
+    if status_filter:
+        apps = [app for app in apps if app.status == status_filter]
+
+    if min_score:
+        try:
+            min_score_val = int(min_score)
+            apps = [app for app in apps if app.match_score and app.match_score >= min_score_val]
+        except ValueError:
+            pass
+
+    if max_score:
+        try:
+            max_score_val = int(max_score)
+            apps = [app for app in apps if app.match_score and app.match_score <= max_score_val]
+        except ValueError:
+            pass
+
+    if from_date:
+        try:
+            from_date_obj = datetime.fromisoformat(from_date.replace('Z', '+00:00'))
+            apps = [app for app in apps if app.created_date >= from_date_obj]
+        except ValueError:
+            pass
+
+    if to_date:
+        try:
+            to_date_obj = datetime.fromisoformat(to_date.replace('Z', '+00:00'))
+            apps = [app for app in apps if app.created_date <= to_date_obj]
+        except ValueError:
+            pass
+
     return jsonify([app.to_dict() for app in apps])
 
 @app.route('/api/applications/<int:app_id>', methods=['GET'])
@@ -786,6 +940,11 @@ def update_scraped_jd_status(jd_id):
 def download_resume_file():
     data = request.get_json()
     data['session_id'] = session['user_session_id']
+
+    # Add format preference if specified
+    format_preference = data.get('format', 'pdf')  # Default to PDF
+    data['format'] = format_preference
+
     task = celery.send_task('celery_worker.create_download_file_task', args=[data])
     return jsonify({'job_id': task.id})
 
