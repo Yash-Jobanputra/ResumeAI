@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Resume AI - Smart Resume Customization</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,typography,aspect-ratio,line-clamp"></script>
     <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
     <style>
@@ -643,7 +643,27 @@
                                     </div>
                                 </div>
                         <div x-show="activeResult.match_score_analysis" class="text-sm text-gray-600 border-t pt-3">
-                            <div class="prose prose-sm max-w-none" x-html="formatMatchAnalysis(activeResult.match_score_analysis)"></div>
+                            <div x-show="isStructuredAnalysis(activeResult.match_score_analysis)">
+                                <!-- New structured format -->
+                                <div class="space-y-4">
+                                    <div>
+                                        <h4 class="font-semibold text-green-600 mb-2">Strengths of Candidacy:</h4>
+                                        <div class="prose prose-sm max-w-none" x-html="formatMatchAnalysis(activeResult.match_score_analysis.strengths)"></div>
+                                    </div>
+                                    <div>
+                                        <h4 class="font-semibold text-red-600 mb-2">Potential Gaps / Weaknesses:</h4>
+                                        <div class="prose prose-sm max-w-none" x-html="formatMatchAnalysis(activeResult.match_score_analysis.gaps)"></div>
+                                    </div>
+                                    <div>
+                                        <h4 class="font-semibold text-blue-600 mb-2">Score Justification:</h4>
+                                        <div class="prose prose-sm max-w-none" x-html="formatMatchAnalysis(activeResult.match_score_analysis.justification)"></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div x-show="!isStructuredAnalysis(activeResult.match_score_analysis)">
+                                <!-- Legacy string format -->
+                                <div class="prose prose-sm max-w-none" x-html="formatMatchAnalysis(activeResult.match_score_analysis)"></div>
+                            </div>
                         </div>
                             </div>
                         </div>
@@ -725,9 +745,29 @@
                                         <div class="h-4 rounded-full" :class="activeApplication.match_score >= 80 ? 'bg-green-500' : 'bg-yellow-500'" :style="`width: ${activeApplication.match_score}%`"></div>
                                     </div>
                                 </div>
-                                <div x-show="activeApplication.match_score_analysis" class="text-sm text-gray-600 italic border-t pt-3">
-                                    <p x-text="activeApplication.match_score_analysis"></p>
+                        <div x-show="activeApplication.match_score_analysis" class="text-sm text-gray-600 border-t pt-3">
+                            <div x-show="isStructuredAnalysis(activeApplication.match_score_analysis)">
+                                <!-- New structured format -->
+                                <div class="space-y-4">
+                                    <div>
+                                        <h4 class="font-semibold text-green-600 mb-2">Strengths of Candidacy:</h4>
+                                        <div class="prose prose-sm max-w-none" x-html="formatMatchAnalysis(activeApplication.match_score_analysis.strengths)"></div>
+                                    </div>
+                                    <div>
+                                        <h4 class="font-semibold text-red-600 mb-2">Potential Gaps / Weaknesses:</h4>
+                                        <div class="prose prose-sm max-w-none" x-html="formatMatchAnalysis(activeApplication.match_score_analysis.gaps)"></div>
+                                    </div>
+                                    <div>
+                                        <h4 class="font-semibold text-blue-600 mb-2">Score Justification:</h4>
+                                        <div class="prose prose-sm max-w-none" x-html="formatMatchAnalysis(activeApplication.match_score_analysis.justification)"></div>
+                                    </div>
                                 </div>
+                            </div>
+                            <div x-show="!isStructuredAnalysis(activeApplication.match_score_analysis)">
+                                <!-- Legacy string format -->
+                                <div class="prose prose-sm max-w-none" x-html="formatMatchAnalysis(activeApplication.match_score_analysis)"></div>
+                            </div>
+                        </div>
                             </div>
                         </div>
                     </div>
@@ -946,7 +986,7 @@
                 defaultPrompts: {},
                 customPrompts: {},
                 promptPlaceholders: {
-                    paragraphs: ['{COMPANY}', '{JOB_TITLE}', '{JOB_DESCRIPTION}', '{PARAGRAPH_COUNT}', '{SELECTED_PARAGRAPHS_JSON}', '{TOTAL_WORD_LIMIT}'],
+                    paragraphs: ['{COMPANY}', '{JOB_TITLE}', '{JOB_DESCRIPTION}', '{PARAGRAPH_COUNT}', '{SELECTED_PARAGRAPHS_JSON}', '{TOTAL_CHAR_LIMIT}'],
                     single_paragraph: ['{COMPANY}', '{JOB_TITLE}', '{JOB_DESCRIPTION}', '{ORIGINAL_PARAGRAPH}', '{WORD_LIMIT}'],
                     cover_letter: ['{COMPANY}', '{JOB_TITLE}', '{JOB_DESCRIPTION}', '{FULL_RESUME_TEXT}'],
                     interview_prep: ['{COMPANY}', '{JOB_TITLE}', '{JOB_DESCRIPTION}', '{FULL_RESUME_TEXT}']
@@ -1157,94 +1197,69 @@
                                 return;
                             }
 
-                            // DEBUG: Log all completed jobs to see what we're working with
-                            console.log('Current completed jobs:', this.completedJobs.map(j => ({ id: j.id, company: j.company_name, result_id: j.result_id })));
+                            // Check if this is a regeneration request
+                            const isRegeneration = result.regenerate || result.original_paragraph || (result.customized_paragraphs && job.result_id);
 
-                            let resultIndex = -1;
-                            let originalResult = null;
+                            if (isRegeneration) {
+                                console.log('Processing regeneration request');
 
-                            // Try multiple methods to find the original result
-                            if (job.result_id) {
-                                resultIndex = this.completedJobs.findIndex(r => r.id === job.result_id);
-                                console.log('Looking for result with ID:', job.result_id, 'Found at index:', resultIndex);
-                            }
+                                // Find the original result to update
+                                let originalResult = null;
+                                let resultIndex = -1;
 
-                            // If not found by result_id, try to find by other criteria
-                            if (resultIndex === -1) {
-                                // Try to find by company name and recent timestamp
-                                const recentResults = this.completedJobs.filter(r =>
-                                    r.company_name === job.company_name &&
-                                    r.timestamp && (Date.now() - r.timestamp) < 300000 // Within 5 minutes
-                                );
-                                if (recentResults.length > 0) {
-                                    resultIndex = this.completedJobs.findIndex(r => r.id === recentResults[0].id);
-                                    console.log('Found result by company name and timestamp:', recentResults[0].id);
+                                // Primary method: Use result_id from job if available
+                                if (job.result_id) {
+                                    resultIndex = this.completedJobs.findIndex(r => r.id === job.result_id);
+                                    if (resultIndex > -1) {
+                                        originalResult = this.completedJobs[resultIndex];
+                                        console.log('Found original result by result_id:', originalResult.id);
+                                    }
                                 }
-                            }
 
-                            if (resultIndex > -1) {
-                                originalResult = this.completedJobs[resultIndex];
-                                console.log('Found original result:', originalResult.id);
-                            } else {
-                                console.log('Could not find original result by ID, trying alternative methods...');
+                                // Fallback method: Find by company name and recent timestamp (within 15 minutes)
+                                if (!originalResult) {
+                                    const recentResults = this.completedJobs.filter(r =>
+                                        r.company_name === job.company_name &&
+                                        r.timestamp && (Date.now() - r.timestamp) < 900000 // Within 15 minutes
+                                    );
 
-                                // Try to find by company name and recent timestamp (within 10 minutes)
-                                const recentResults = this.completedJobs.filter(r =>
-                                    r.company_name === job.company_name &&
-                                    r.timestamp && (Date.now() - r.timestamp) < 600000 // Within 10 minutes
-                                );
+                                    if (recentResults.length > 0) {
+                                        // Use the most recent result
+                                        originalResult = recentResults[0];
+                                        resultIndex = this.completedJobs.findIndex(r => r.id === originalResult.id);
+                                        console.log('Found original result by company name and timestamp:', originalResult.id);
+                                    }
+                                }
 
-                                if (recentResults.length > 0) {
-                                    // Use the most recent result
-                                    originalResult = recentResults[0];
-                                    console.log('Found original result by company name and timestamp:', originalResult.id);
-                                } else {
+                                if (!originalResult) {
                                     console.error('Could not find original result for regeneration. Available results:',
                                         this.completedJobs.map(r => ({ id: r.id, company: r.company_name, timestamp: r.timestamp })));
                                     this.showToast('error', 'Could not find original result to update. Please try generating a new customization instead.');
                                     return;
                                 }
-                            }
 
-                            if (result.original_paragraph) {
-                                // Handle single paragraph regeneration
-                                console.log('Processing single paragraph regeneration');
-                                const updatedParagraphs = { ...originalResult.customized_paragraphs };
-                                updatedParagraphs[result.original_paragraph] = result.enhanced_text;
-                                this.completedJobs[resultIndex].customized_paragraphs = updatedParagraphs;
-
-                                // Update activeResult if it's the same job
-                                if(this.activeResult.id === originalResult.id) {
-                                    this.activeResult.customized_paragraphs = { ...updatedParagraphs };
-                                    this.forceUpdate();
-                                }
-
-                                this.showToast('success', 'Paragraph regenerated!');
-                            } else if (result.original_paragraph || result.customized_paragraphs || result.cover_letter || result.regenerate) {
                                 // Handle different regeneration types
-                                console.log('Processing regeneration');
-
-                                // Handle single paragraph regeneration
-                                if (result.original_paragraph) {
+                                if (result.original_paragraph && result.enhanced_text) {
+                                    // Single paragraph regeneration
                                     console.log('Processing single paragraph regeneration');
                                     const updatedParagraphs = { ...originalResult.customized_paragraphs };
                                     updatedParagraphs[result.original_paragraph] = result.enhanced_text;
                                     this.completedJobs[resultIndex].customized_paragraphs = updatedParagraphs;
 
-                                    if(this.activeResult.id === originalResult.id) {
+                                    if (this.activeResult.id === originalResult.id) {
                                         this.activeResult.customized_paragraphs = { ...updatedParagraphs };
                                         this.forceUpdate();
                                     }
                                     this.showToast('success', 'Paragraph regenerated!');
 
-                                // Handle cover letter regeneration
                                 } else if (result.cover_letter) {
+                                    // Cover letter regeneration
                                     console.log('Processing cover letter regeneration');
                                     this.completedJobs[resultIndex].cover_letter = result.cover_letter;
                                     this.completedJobs[resultIndex].match_score = result.match_score;
                                     this.completedJobs[resultIndex].match_score_analysis = result.match_score_analysis;
 
-                                    if(this.activeResult.id === originalResult.id) {
+                                    if (this.activeResult.id === originalResult.id) {
                                         this.activeResult.cover_letter = result.cover_letter;
                                         this.activeResult.match_score = result.match_score;
                                         this.activeResult.match_score_analysis = result.match_score_analysis;
@@ -1252,46 +1267,54 @@
                                     }
                                     this.showToast('success', 'Cover letter regenerated!');
 
-                                // Handle full paragraph regeneration (only if customized_paragraphs is not empty)
                                 } else if (result.customized_paragraphs && Object.keys(result.customized_paragraphs).length > 0) {
+                                    // Full paragraph regeneration
                                     console.log('Processing full paragraph regeneration');
                                     this.completedJobs[resultIndex].customized_paragraphs = result.customized_paragraphs;
 
-                                    if(this.activeResult.id === originalResult.id) {
+                                    if (this.activeResult.id === originalResult.id) {
                                         this.activeResult.customized_paragraphs = { ...result.customized_paragraphs };
                                         this.forceUpdate();
                                     }
                                     this.showToast('success', 'Paragraphs regenerated!');
 
-                                // Handle object-based regeneration types
-                                } else if (result.regenerate && typeof result.regenerate === 'object') {
-                                    console.log('Processing object-based regeneration');
-                                    if (result.regenerate.single_paragraph) {
-                                        this.showToast('success', 'Paragraph regenerated!');
-                                    } else if (result.regenerate.paragraphs) {
-                                        this.completedJobs[resultIndex].customized_paragraphs = result.customized_paragraphs || {};
-                                        if(this.activeResult.id === originalResult.id) {
+                                } else if (result.regenerate) {
+                                    // Object-based regeneration
+                                    console.log('Processing object-based regeneration:', result.regenerate);
+                                    if (result.regenerate === 'paragraphs' && result.customized_paragraphs) {
+                                        this.completedJobs[resultIndex].customized_paragraphs = result.customized_paragraphs;
+                                        if (this.activeResult.id === originalResult.id) {
                                             this.activeResult.customized_paragraphs = { ...result.customized_paragraphs };
                                             this.forceUpdate();
                                         }
                                         this.showToast('success', 'Paragraphs regenerated!');
-                                    } else if (result.regenerate.cover_letter) {
-                                        this.completedJobs[resultIndex].cover_letter = result.cover_letter || '';
-                                        if(this.activeResult.id === originalResult.id) {
-                                            this.activeResult.cover_letter = result.cover_letter || '';
+                                    } else if (result.regenerate === 'cover_letter' && result.cover_letter) {
+                                        this.completedJobs[resultIndex].cover_letter = result.cover_letter;
+                                        this.completedJobs[resultIndex].match_score = result.match_score;
+                                        this.completedJobs[resultIndex].match_score_analysis = result.match_score_analysis;
+                                        if (this.activeResult.id === originalResult.id) {
+                                            this.activeResult.cover_letter = result.cover_letter;
+                                            this.activeResult.match_score = result.match_score;
+                                            this.activeResult.match_score_analysis = result.match_score_analysis;
                                             this.forceUpdate();
                                         }
                                         this.showToast('success', 'Cover letter regenerated!');
+                                    } else {
+                                        console.error('Unknown regeneration type:', result.regenerate);
+                                        this.showToast('error', 'Unknown regeneration type received');
                                     }
                                 } else {
-                                    console.error('Unknown regeneration format:', result);
-                                    this.showToast('error', 'Unknown regeneration format received');
+                                    console.error('Invalid regeneration format:', result);
+                                    this.showToast('error', 'Invalid regeneration format received');
                                 }
+
                             } else {
                                 // Handle initial customization (not regeneration)
+                                console.log('Processing initial customization');
                                 const newResult = { id: data.job_id, timestamp: Date.now(), ...job, ...data.result };
                                 this.completedJobs.unshift(newResult);
                                 this.showToast('success', `AI result for ${job.company_name} is ready!`);
+
                                 // Refresh scraped JDs to get updated status from database
                                 if (job.scraped_jd_id) {
                                     await this.getScrapedJDs();
@@ -1386,54 +1409,190 @@
                 // --- PROMPT MANAGEMENT ---
                 defineDefaultPrompts() {
                     this.defaultPrompts = {
-                        paragraphs: `You are an expert career coach and professional resume writer. Your task is to transform the provided resume paragraphs to be compelling and tailored for the target role.
-CONTEXT:
-- COMPANY: {COMPANY}
-- TARGET JOB DESCRIPTION:
-{JOB_DESCRIPTION}
+                        paragraphs: `ROLE:
+You are an elite Career Strategist and Certified Professional Resume Writer (CPRW) with deep expertise in Applicant Tracking System (ATS) optimization and modern recruitment psychology. Your specialization is reverse-engineering job descriptions to create compelling career narratives that bypass algorithmic filters and resonate with hiring managers at top-tier companies like {COMPANY}.
 
-TASK: TRANSFORM {PARAGRAPH_COUNT} RESUME PARAGRAPHS
-- SELECTED PARAGRAPHS (as a JSON object of id:text):
-{SELECTED_PARAGRAPHS_JSON}
-- GUIDELINES: Inject hard and soft skill keywords from the JD wherever possible. Keep action word repetition low. Restructure sentences for maximum impact and flow. Use strong action verbs, quantify achievements, and align experiences with the target role.
-- CRITICAL: Only enhance what's there. Never fabricate new achievements. The total word count for all transformed paragraphs must not exceed {TOTAL_WORD_LIMIT}.`,
-                        single_paragraph: `You are an expert career coach and professional resume writer. Your task is to transform the provided resume paragraphs to be compelling and tailored for the target role.
-CONTEXT:
-- COMPANY: {COMPANY}
-- TARGET JOB DESCRIPTION:
-{JOB_DESCRIPTION}
+OBJECTIVE:
+Your mission is to strategically re-engineer the provided resume paragraphs. Transform them from passive descriptions of duties into high-impact, quantified statements of achievement. The rewritten paragraphs must be meticulously tailored to the target job description, demonstrating an undeniable fit for the role.
 
-TASK: TRANSFORM A SINGLE PARAGRAPH
-- ORIGINAL PARAGRAPH: "{ORIGINAL_PARAGRAPH}"
-- GUIDELINES: Dramatically improve the paragraph by restructuring sentences for impact, using strong action verbs, quantifying achievements, and integrating keywords from the job description. Maintain a confident, results-oriented tone.
-- CRITICAL: Only enhance what's there. Do not fabricate new achievements. The new paragraph must be a similar length, not exceeding {WORD_LIMIT} words.`,
-                        cover_letter: `You are an expert career coach. Your task is to write a cover letter and provide a job match score based on the provided context.
-CONTEXT:
-- COMPANY: {COMPANY}
-- TARGET JOB DESCRIPTION:
-{JOB_DESCRIPTION}
-- FULL RESUME TEXT:
-{FULL_RESUME_TEXT}
+CONTEXTUAL INPUTS:
 
-TASK: WRITE COVER LETTER & PROVIDE MATCH SCORE
-- Write a compelling, professional cover letter (3-4 paragraphs, 250-300 words).
-- Provide a brutally honest job match score (1-100).
-- GUIDELINES: Use a professional tone, show knowledge of the company, and highlight key achievements from the resume. Use plain text only with NO MARKDOWN.
-- Match Score (1–100): 90–100 = exceptional; 80–89 = strong; 70–79 = good; below 70 = moderate to weak.`,
-                        interview_prep: `You are an expert career coach and interview preparation specialist. Your task is to generate a comprehensive set of interview questions and exemplary answers based on the candidate's resume and the target job description.
+COMPANY: {COMPANY}
+
+TARGET JOB DESCRIPTION: {JOB_DESCRIPTION}
+
+PARAGRAPHS FOR TRANSFORMATION ({PARAGRAPH_COUNT} total): {SELECTED_PARAGRAPHS_JSON}
+
+MAXIMUM TOTAL CHARACTER COUNT: {TOTAL_CHAR_LIMIT}
+
+EXECUTION DIRECTIVES:
+
+ATS & Keyword Optimization (Primary Directive):
+
+Analyze & Map: First, meticulously parse the {JOB_DESCRIPTION} to identify primary and secondary keywords. This includes hard skills (e.g., software, technical methodologies), soft skills (e.g., 'strategic planning', 'cross-functional collaboration'), and key qualifications.
+
+Semantic Integration: Do not merely "stuff" keywords. Integrate them naturally and semantically. If the JD mentions "managing budgets," use related powerful phrases like "financial oversight," "P&L management," or "resource allocation" if supported by the original text.
+
+Mirror Language: Reflect the specific terminology and professional tone used by {COMPANY} in the job description to create a sense of immediate cultural and professional alignment.
+
+Quantification & Impact Framing (Secondary Directive):
+
+Employ the STAR/PAR Method: Restructure every possible statement to follow the Problem-Action-Result (or Situation-Task-Action-Result) framework. Focus on the outcome of the actions.
+
+Introduce Metrics: Where the original text implies an achievement, quantify it. Use metrics such as percentages (e.g., increased efficiency by 15%), monetary values (e.g., managed a £500K budget), scale (e.g., led a team of 10), or time saved (e.g., reduced processing time by 2 days). The goal is to translate responsibilities into measurable results.
+
+Lead with Impact: Begin sentences with a powerful, diverse action verb that immediately signals achievement (e.g., "Orchestrated," "Engineered," "Spearheaded," "Maximized," "Revitalized"). Avoid passive language ("Responsible for...") and low-impact verbs ("Led," "Managed") where a stronger alternative exists.
+
+Structural & Stylistic Integrity:
+
+Conciseness: Eliminate filler words and redundant phrases. Each word must serve a purpose.
+
+High-Fidelity Transformation: You must adhere strictly to the achievements and experiences present in the original {SELECTED_PARAGRAPHS_JSON}. Enhance and reframe, but never fabricate new data, skills, or outcomes.
+
+Adhere to Constraints: The combined character count of all transformed paragraphs must not exceed the {TOTAL_CHAR_LIMIT}. The output must be a direct one-to-one transformation of the provided paragraph IDs.
+
+CRITICAL FINAL CHECK:
+Before finalizing, review the rewritten paragraphs against the {JOB_DESCRIPTION} one last time. Ask: "Does this text make the candidate look like the perfect solution to the problems and needs outlined in this job description?" The answer must be an unequivocal "yes."`,
+                        single_paragraph: `ROLE:
+You are an elite Career Strategist and Certified Professional Resume Writer (CPRW) with deep expertise in Applicant Tracking System (ATS) optimization and modern recruitment psychology. Your specialization is reverse-engineering job descriptions to create compelling career narratives that bypass algorithmic filters and resonate with hiring managers at top-tier companies like {COMPANY}.
+
+OBJECTIVE:
+Your mission is to strategically re-engineer a single resume paragraph. Transform it from a passive description of duties into a high-impact, quantified statement of achievement. The rewritten paragraph must be meticulously tailored to the target job description, demonstrating an undeniable fit for the role.
+
+CONTEXTUAL INPUTS:
+
+COMPANY: {COMPANY}
+
+TARGET JOB DESCRIPTION: {JOB_DESCRIPTION}
+
+ORIGINAL PARAGRAPH FOR TRANSFORMATION: "{ORIGINAL_PARAGRAPH}"
+
+MAXIMUM WORD COUNT: {WORD_LIMIT}
+
+EXECUTION DIRECTIVES:
+
+ATS & Keyword Optimization (Primary Directive):
+
+Analyze & Map: First, meticulously parse the {JOB_DESCRIPTION} to identify primary and secondary keywords. This includes hard skills (e.g., software, technical methodologies), soft skills (e.g., 'strategic planning', 'cross-functional collaboration'), and key qualifications.
+
+Semantic Integration: Do not merely "stuff" keywords. Integrate them naturally and semantically. If the JD mentions "managing budgets," use related powerful phrases like "financial oversight," "P&L management," or "resource allocation" if supported by the original text.
+
+Mirror Language: Reflect the specific terminology and professional tone used by {COMPANY} in the job description to create a sense of immediate cultural and professional alignment.
+
+Quantification & Impact Framing (Secondary Directive):
+
+Employ the STAR/PAR Method: Restructure the statement to follow the Problem-Action-Result (or Situation-Task-Action-Result) framework. Focus on the outcome of the actions.
+
+Introduce Metrics: Where the original text implies an achievement, quantify it. Use metrics such as percentages (e.g., increased efficiency by 15%), monetary values (e.g., managed a £500K budget), scale (e.g., led a team of 10), or time saved (e.g., reduced processing time by 2 days). The goal is to translate responsibilities into measurable results.
+
+Lead with Impact: Begin the paragraph with a powerful, diverse action verb that immediately signals achievement (e.g., "Orchestrated," "Engineered," "Spearheaded," "Maximized," "Revitalized"). Avoid passive language ("Responsible for...") and low-impact verbs ("Led," "Managed") where a stronger alternative exists.
+
+Structural & Stylistic Integrity:
+
+Conciseness: Eliminate filler words and redundant phrases. Each word must serve a purpose.
+
+High-Fidelity Transformation: You must adhere strictly to the achievements and experiences present in the original paragraph. Enhance and reframe, but never fabricate new data, skills, or outcomes.
+
+Adhere to Constraints: The transformed paragraph must not exceed {WORD_LIMIT} words. Maintain a similar length to the original while dramatically improving impact and relevance.
+
+CRITICAL FINAL CHECK:
+Before finalizing, review the rewritten paragraph against the {JOB_DESCRIPTION} one last time. Ask: "Does this text make the candidate look like the perfect solution to the problems and needs outlined in this job description?" The answer must be an unequivocal "yes."`,
+                        cover_letter: `ROLE: You are an Expert Career Strategist and Recruitment Analyst. Your expertise lies in dissecting job descriptions and resumes to create compelling application materials and provide a rigorous, objective analysis of a candidate's viability. You do not sugarcoat; your feedback is direct, evidence-based, and actionable.
+
+MISSION: Your mission is to perform a two-part task based on the provided context. First, you will write a world-class cover letter that positions the candidate as the ideal solution to the company's needs. Second, you will conduct a brutally honest, data-driven analysis to score the candidate's match for the role, identifying both strengths and critical gaps.
+
 CONTEXT:
-- COMPANY: {COMPANY}
-- TARGET ROLE: {JOB_TITLE}
-- TARGET JOB DESCRIPTION:
-{JOB_DESCRIPTION}
-- CANDIDATE'S FULL RESUME TEXT:
-{FULL_RESUME_TEXT}
+
+COMPANY: {COMPANY}
+
+TARGET JOB DESCRIPTION: {JOB_DESCRIPTION}
+
+FULL RESUME TEXT: {FULL_RESUME_TEXT}
+
+TASK: GENERATE COVER LETTER & STRATEGIC MATCH ANALYSIS
+
+PART 1: THE COVER LETTER (250-300 words)
+
+Your writing must be concise, confident, and meticulously tailored.
+
+Opening Hook: Do not start with a generic "I am writing to apply...". Instead, create a powerful opening statement that immediately connects the candidate's most significant achievement or core competency to a specific company goal, value, or a challenge implied in the job description.
+
+Body Paragraphs (The "Proof"):
+
+Synthesize the top 2-3 requirements from the {JOB_DESCRIPTION}.
+
+For each requirement, extract a specific, quantifiable achievement from the {FULL_RESUME_TEXT} that directly proves the candidate's capability.
+
+Weave these proofs into a narrative. Use the Problem-Action-Result (PAR) framework. For example: "At my previous role, I addressed the challenge of [Problem] by implementing [Action], which resulted in a [Quantifiable Result]."
+
+Subtly integrate knowledge of {COMPANY}'s products, recent news, or mission to demonstrate genuine interest beyond the job posting.
+
+Closing & Call to Action: Conclude with a confident statement summarizing the candidate's value proposition. End with a proactive call to action, expressing eagerness to discuss how their specific skills can contribute to the company's upcoming projects or goals.
+
+PART 2: THE JOB MATCH ANALYSIS
+
+Your analysis must be objective and unflinching. Avoid platitudes.
+
+Job Match Score (1-100): Provide a single integer score based on the following rubric.
+
+90-100 (Exceptional): Candidate exceeds most core requirements, meets all preferred qualifications, and possesses unique value-adds. The resume provides quantifiable proof of high performance in directly comparable tasks.
+
+80-89 (Strong): Candidate meets all core requirements and most preferred qualifications. There is a clear and direct mapping between resume experience and job duties.
+
+70-79 (Good): Candidate meets the majority of core requirements but may be missing some preferred qualifications or lack direct experience in a specific domain. The candidacy is solid but not flawless.
+
+Below 70 (Moderate to Weak): Candidate is missing one or more core requirements. The experience is adjacent or requires significant upskilling. This represents a substantial reach for the candidate.
+
+Match Score Analysis: Provide a detailed rationale for your score, structured in the following three sections:
+
+Strengths of Candidacy: Itemize the strongest points of alignment. Quote specific phrases from the {JOB_DESCRIPTION} and directly map them to accomplishments or skills listed in the {FULL_RESUME_TEXT}.
+
+Potential Gaps / Weaknesses: Identify and explicitly state any significant misalignments. Where does the resume fall short? Note missing technologies, insufficient years of experience in a key area, lack of industry-specific context, or any other core requirement that is not fully substantiated by the resume.
+
+Score Justification: Conclude with a summary paragraph that synthesizes the strengths and weaknesses to explain precisely why the specific score was assigned. For example, "The score of 82 reflects the candidate's exceptional alignment with core technical skills A and B, but is tempered by the lack of direct experience with industry-specific software C, which is listed as a preferred qualification."`,
+                        interview_prep: `You are to act as an elite Tier-1 career coach and interview strategist. Your expertise is in meticulously deconstructing a candidate's history against a target role's requirements to forge a powerful, compelling interview narrative. You do not generate generic questions; you create a bespoke interrogation plan designed to highlight the candidate's unique strengths and proactively address potential weaknesses.
+
+PRIMARY OBJECTIVE:
+
+Analyze the provided {FULL_RESUME_TEXT} in the context of the {JOB_DESCRIPTION} for the {JOB_TITLE} role at {COMPANY}. Your goal is to produce a set of highly targeted interview questions and exemplary answers that will strategically position the candidate for success. The output must be a single, valid JSON object.
+
+ANALYTICAL FRAMEWORK (Your Internal Process):
+
+Resume-to-JD Synergy and Gap Analysis: First, perform a deep comparison. Identify the top 3-5 areas where the candidate's resume shows exceptional alignment with the job description's core requirements. Conversely, identify any potential "red flags" or gaps—such as a non-traditional career path, a noticeable employment gap, a potential lack of experience in a key area mentioned in the JD, or frequent job changes.
+
+Strategic Narrative Formulation: Based on your analysis, determine the central narrative the candidate should convey. This narrative should be woven through all the answers. For example, is it a story of "the technical expert pivoting to leadership," "the generalist now specializing," or "the problem-solver who thrives in chaotic environments"?
 
 TASK: GENERATE INTERVIEW QUESTIONS & ANSWERS
-Generate two distinct categories of questions. For each question, provide both 'talking_points' (a bulleted list of key ideas to convey) and a complete sample 'answer'.
 
-1.  **General Questions (5 questions):** Tailored to the candidate's specific resume. Scrutinize their career path, skills, and experiences (e.g., job gaps, career changes, specific projects).
-2.  **Role-Based Questions (5 questions):** Highly specific to the technical and functional requirements of the job description, framed in the context of the candidate's resume.`
+Based on your analysis, generate two distinct categories of questions. For each question, provide both 'talking_points' (the strategic pillars of the response) and a complete sample 'answer' (a polished, first-person narrative).
+
+Category 1: General & Career Narrative Questions (5 Questions)
+
+Mandate: These questions must stem directly from your analysis of the candidate's career trajectory as presented in the resume. They should probe their motivations, rationale for key transitions, and self-awareness. Target the potential "red flags" you identified, framing them as opportunities for the candidate to demonstrate growth, resilience, or strategic thinking. Do not ask generic questions like "Tell me about yourself." Instead, ask pointed questions like, "I noticed you transitioned from [Industry/Role A] to [Industry/Role B]. What catalyzed that specific change, and how did it prepare you for the challenges outlined in our job description?"
+
+Answer Construction: The answers here should solidify the candidate's career narrative. They must explain the "why" behind their decisions, connecting past experiences to their future ambitions for this specific role.
+
+Category 2: Role-Based & Behavioral Questions (5 Questions)
+
+Mandate: These questions must be surgical strikes that connect a specific, critical requirement from the {JOB_DESCRIPTION} with a concrete project or achievement from the {FULL_RESUME_TEXT}. Frame the questions behaviorally to compel storytelling. For example, instead of "Do you have experience with X?", ask, "The job requires extensive experience with [Tool/Skill X from JD]. Describe your most challenging project from your time at [Company from Resume] where you leveraged this skill to overcome a significant obstacle."
+
+Answer Construction: The answers MUST implicitly or explicitly follow the STAR method (Situation, Task, Action, Result).
+
+Situation: Briefly set the context of the project or challenge.
+
+Task: Describe the specific goal or objective you were responsible for.
+
+Action: Detail the specific, individual steps you took to address the task. This is the most important part.
+
+Result: Quantify the outcome. Use metrics, data, and tangible business impact (e.g., "reduced latency by 30%", "increased user engagement by 15%", "saved the project $50k in operational costs"). The result must tie back to the value sought in the job description.
+
+QUALITY DIRECTIVES:
+
+No Generic Content: Every question and answer must be rigorously tailored to the provided resume and job description.
+
+Strategic Talking Points: The talking_points should not be a mere summary of the answer. They should be concise, strategic bullet points outlining the core message and the key skills being demonstrated (e.g., "Demonstrate proactive problem-solving," "Highlight quantitative impact," "Connect past project to this company's specific needs").
+
+Authentic Voice: The sample answer should be written in a confident, professional, and natural first-person voice. It should be comprehensive but not verbose.`
                     };
                 },
                 loadPrompts() {
@@ -1649,13 +1808,40 @@ Generate two distinct categories of questions. For each question, provide both '
                     let payload;
                     try {
                         if(options.regenerate) {
+                            // For regeneration, find the original result and use its data
                             const result = this.completedJobs.find(r => r.id === options.result_id);
                             if(!result) throw new Error('Could not find original result for regeneration.');
-                             payload = { resume_id: result.resume_id, company_name: result.company_name, job_description: result.job_description, ai_model: this.aiModel, regenerate: options.regenerate, result_id: options.result_id, custom_prompts: this.customPrompts };
+
+                            // Use the original result's ID as the result_id for this regeneration
+                            const originalResultId = options.result_id;
+
+                            payload = {
+                                resume_id: result.resume_id,
+                                company_name: result.company_name,
+                                job_description: result.job_description,
+                                ai_model: this.aiModel,
+                                regenerate: options.regenerate,
+                                result_id: originalResultId, // This is the key - maintain the original result ID
+                                custom_prompts: this.customPrompts
+                            };
+
+                            console.log('Starting regeneration with payload:', payload);
                         } else {
-                            payload = { resume_id: this.activeResume.id, company_name: this.companyName, job_description: this.jobDescription, ai_model: this.aiModel, scraped_jd_id: this.scrapedJdIdToCredit, custom_prompts: this.customPrompts };
+                            payload = {
+                                resume_id: this.activeResume.id,
+                                company_name: this.companyName,
+                                job_description: this.jobDescription,
+                                ai_model: this.aiModel,
+                                scraped_jd_id: this.scrapedJdIdToCredit,
+                                custom_prompts: this.customPrompts
+                            };
                         }
-                        const response = await fetch('/customize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+
+                        const response = await fetch('/customize', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
                         const data = await response.json();
                         if (!response.ok) throw new Error(data.error || 'AI customization failed.');
 
@@ -1669,7 +1855,8 @@ Generate two distinct categories of questions. For each question, provide both '
                             custom_prompts: payload.custom_prompts,
                             scraped_jd_id: payload.scraped_jd_id,
                             type: 'customization',
-                            timestamp: Date.now()
+                            timestamp: Date.now(),
+                            result_id: payload.result_id // Store the original result ID for future regenerations
                         };
 
                         // Add to active jobs
@@ -1773,12 +1960,36 @@ Generate two distinct categories of questions. For each question, provide both '
                     this.showToast('info', `Preparing ${format.toUpperCase()} download...`);
                     this.showDownloadOptions = false; // Close dropdown
                     try {
+                        // Ensure customized_paragraphs is properly formatted
+                        let customizedParagraphs = source.customized_paragraphs;
+
+                        // If it's a string (from database), parse it back to dict
+                        if (typeof customizedParagraphs === 'string') {
+                            try {
+                                customizedParagraphs = JSON.parse(customizedParagraphs);
+                                console.log('DEBUG: Parsed customized_paragraphs from string to dict');
+                            } catch (e) {
+                                console.warn('DEBUG: Could not parse customized_paragraphs, using empty dict:', e);
+                                customizedParagraphs = {};
+                            }
+                        }
+
+                        // Ensure it's a dictionary
+                        if (typeof customizedParagraphs !== 'object' || customizedParagraphs === null) {
+                            console.warn('DEBUG: customized_paragraphs is not a dict, using empty dict');
+                            customizedParagraphs = {};
+                        }
+
                         const payload = {
                             resume_id: source.resume_id,
-                            customizations: { customized_paragraphs: source.customized_paragraphs },
+                            customizations: { customized_paragraphs: customizedParagraphs },
                             company_name: source.company_name,
                             format: format
                         };
+
+                        console.log('DEBUG: Download payload:', payload);
+                        console.log('DEBUG: customized_paragraphs type:', typeof customizedParagraphs);
+
                         await fetch('/api/download_resume', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
                     } catch (error) { this.showToast('error', 'Failed to queue download.'); }
                 },
@@ -1999,7 +2210,7 @@ Generate two distinct categories of questions. For each question, provide both '
                     if (job.scraped_jd_id) {
                         await this.getScrapedJDs();
                     }
-ng 
+
                     // Stop polling if no more active jobs
                     if (this.activeJobs.length === 0) {
                         this.stopJobPolling();
@@ -2058,42 +2269,55 @@ ng
                     }, 100);
                 },
 
+                // --- ANALYSIS FORMAT DETECTION ---
+                isStructuredAnalysis(analysis) {
+                    return analysis && typeof analysis === 'object' && (analysis.strengths || analysis.gaps || analysis.justification);
+                },
+
                 // --- TEXT FORMATTING ---
                 formatMatchAnalysis(text) {
-                    if (!text) return '';
-
-                    // Split into sections based on common patterns
-                    let formatted = text
-                        // Format the main score line
-                        .replace(/(\d+)%/, '<span class="text-2xl font-bold text-green-600">$1%</span>')
-
-                        // Format section headers (lines starting with **)
-                        .replace(/\*\*(.*?):\*\*/g, '<h4 class="text-lg font-semibold text-gray-800 mt-4 mb-2 border-b border-gray-200 pb-1">$1</h4>')
-
-                        // Format bullet points
-                        .replace(/^\*\s+(.*?)$/gm, '<div class="mb-2">• <span class="font-medium">$1</span></div>')
-
-                        // Format sub-bullets
-                        .replace(/^\*\s*\*\s*(.*?)$/gm, '<div class="mb-1 ml-4">◦ $1</div>')
-
-                        // Format bold text within content
-                        .replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-gray-900">$1</strong>')
-
-                        // Format italic text
-                        .replace(/\*(.*?)\*/g, '<em class="italic text-gray-700">$1</em>')
-
-                        // Add spacing between paragraphs
-                        .replace(/\n\n/g, '</p><p class="mb-3">')
-
-                        // Clean up any remaining newlines
-                        .replace(/\n/g, '<br>');
-
-                    // Wrap in paragraph tags if not already wrapped
-                    if (!formatted.includes('<p>')) {
-                        formatted = '<p class="mb-3 text-gray-700 leading-relaxed">' + formatted + '</p>';
+                    if (!text || typeof text !== 'string') {
+                        console.warn('formatMatchAnalysis received invalid text:', text);
+                        return '<p class="text-gray-500 italic">Analysis not available</p>';
                     }
 
-                    return formatted;
+                    try {
+                        // Split into sections based on common patterns
+                        let formatted = text
+                            // Format the main score line
+                            .replace(/(\d+)%/g, '<span class="text-2xl font-bold text-green-600">$1%</span>')
+
+                            // Format section headers (lines starting with **)
+                            .replace(/\*\*(.*?):\*\*/g, '<h4 class="text-lg font-semibold text-gray-800 mt-4 mb-2 border-b border-gray-200 pb-1">$1</h4>')
+
+                            // Format bullet points
+                            .replace(/^\*\s+(.*?)$/gm, '<div class="mb-2">• <span class="font-medium">$1</span></div>')
+
+                            // Format sub-bullets
+                            .replace(/^\*\s*\*\s*(.*?)$/gm, '<div class="mb-1 ml-4">◦ $1</div>')
+
+                            // Format bold text within content
+                            .replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-gray-900">$1</strong>')
+
+                            // Format italic text
+                            .replace(/\*(.*?)\*/g, '<em class="italic text-gray-700">$1</em>')
+
+                            // Add spacing between paragraphs
+                            .replace(/\n\n/g, '</p><p class="mb-3">')
+
+                            // Clean up any remaining newlines
+                            .replace(/\n/g, '<br>');
+
+                        // Wrap in paragraph tags if not already wrapped
+                        if (!formatted.includes('<p>') && !formatted.includes('<h4>')) {
+                            formatted = '<p class="mb-3 text-gray-700 leading-relaxed">' + formatted + '</p>';
+                        }
+
+                        return formatted;
+                    } catch (error) {
+                        console.error('Error formatting match analysis:', error);
+                        return '<p class="text-red-500">Error formatting analysis</p>';
+                    }
                 }
             }
         }

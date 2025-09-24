@@ -174,19 +174,46 @@ def create_download_file_task(self, data):
         resume_id = data.get('resume_id')
         customizations = data.get('customizations', {})
         company_name = data.get('company_name', 'resume')
-        
+
+        print(f"DEBUG: Download task started with customizations: {customizations}")
+        print(f"DEBUG: Customizations type: {type(customizations)}")
+
         resume = Resume.query.get(resume_id)
         if not resume:
             raise Exception("Resume not found for download task.")
+
+        # Ensure customizations is in the right format
+        if isinstance(customizations, str):
+            try:
+                customizations = json.loads(customizations)
+                print(f"DEBUG: Parsed customizations from string: {customizations}")
+            except json.JSONDecodeError:
+                print(f"DEBUG: Could not parse customizations string, using empty dict")
+                customizations = {}
+
+        if not isinstance(customizations, dict):
+            print(f"DEBUG: Customizations is not a dict, converting to dict")
+            customizations = {}
 
         updated_docx_path = processor.update_docx_with_customizations(
             resume.original_file_path,
             customizations
         )
         output_filename = f"{resume.user_first_name}_{resume.user_last_name}_{company_name}".upper().replace(" ", "_")
-        
-        final_path, final_filename = processor.convert_docx_to_pdf(updated_docx_path, output_filename)
-        
+
+        # Check the requested format
+        requested_format = data.get('format', 'pdf')
+        print(f"DEBUG: Requested format: {requested_format}")
+
+        if requested_format == 'docx':
+            # User explicitly requested DOCX - just copy the file
+            print(f"DEBUG: User requested DOCX format, copying file directly")
+            final_path, final_filename = processor.convert_docx_to_docx(updated_docx_path, output_filename)
+        else:
+            # Try PDF conversion, fallback to DOCX if it fails
+            print(f"DEBUG: Attempting PDF conversion (will fallback to DOCX if needed)")
+            final_path, final_filename = processor.convert_docx_to_pdf(updated_docx_path, output_filename)
+
         download_url = f'/download/{final_filename}'
         socketio.emit('download_ready', {'job_id': self.request.id, 'download_url': download_url}, room=session_id)
         return {'download_url': download_url}

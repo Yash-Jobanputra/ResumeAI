@@ -249,82 +249,381 @@ class ResumeProcessor:
             request_options = {}
         try:
             response = model.generate_content(prompt, request_options=request_options)
-            json_match = re.search(r'\{.*\}', response.text, re.DOTALL)
-            if not json_match:
-                if response.text.strip().startswith('{'):
-                     return json.loads(response.text, strict=False)
-                raise Exception("AI response did not contain a valid JSON object.")
-            return json.loads(json_match.group(), strict=False)
+
+            if not response or not response.text:
+                raise Exception("Empty response from AI model")
+
+            response_text = response.text.strip()
+            print(f"AI Response (first 500 chars): {response_text[:500]}")
+
+            # Try to extract JSON from the response
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+
+            if json_match:
+                json_str = json_match.group()
+                print(f"Extracted JSON (first 500 chars): {json_str[:500]}")
+
+                # Clean the JSON string
+                json_str = self._clean_json_string(json_str)
+
+                try:
+                    return json.loads(json_str, strict=False)
+                except json.JSONDecodeError as e:
+                    print(f"JSON decode error: {e}")
+                    print(f"Attempting to fix JSON...")
+
+                    # Try to fix common JSON issues
+                    json_str = self._fix_common_json_issues(json_str)
+                    try:
+                        return json.loads(json_str, strict=False)
+                    except json.JSONDecodeError as e2:
+                        print(f"Failed to fix JSON: {e2}")
+                        # If all else fails, try to extract just the essential parts
+                        return self._extract_json_fallback(response_text)
+
+            # If no JSON found but response starts with {, try the whole response
+            if response_text.startswith('{'):
+                json_str = self._clean_json_string(response_text)
+                try:
+                    return json.loads(json_str, strict=False)
+                except json.JSONDecodeError as e:
+                    print(f"JSON decode error on full response: {e}")
+                    json_str = self._fix_common_json_issues(json_str)
+                    try:
+                        return json.loads(json_str, strict=False)
+                    except json.JSONDecodeError as e2:
+                        print(f"Failed to fix JSON on full response: {e2}")
+                        return self._extract_json_fallback(response_text)
+
+            raise Exception(f"AI response did not contain a valid JSON object. Response: {response_text[:1000]}")
+
         except Exception as e:
             print(f"Error during Gemini API call or JSON parsing: {e}")
             print(f"Full response text was: {response.text if 'response' in locals() else 'N/A'}")
             raise
 
+    def _clean_json_string(self, json_str):
+        """Clean common JSON formatting issues"""
+        # Remove any markdown code blocks
+        json_str = re.sub(r'```json\s*', '', json_str)
+        json_str = re.sub(r'```\s*', '', json_str)
+
+        # Fix trailing commas before closing braces/brackets
+        json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+
+        # More robust quote escaping - handle quotes within string values
+        # This is more complex because we need to be careful not to break valid JSON
+        json_str = self._escape_quotes_in_json(json_str)
+
+        return json_str.strip()
+
+    def _escape_quotes_in_json(self, json_str):
+        """More robust quote escaping for JSON strings"""
+        try:
+            # Parse the JSON to identify string values that need escaping
+            # We'll use a more targeted approach to avoid breaking valid JSON
+
+            # First, let's try to identify and fix common issues
+            lines = json_str.split('\n')
+            cleaned_lines = []
+
+            for line in lines:
+                # Skip lines that are just structural (keys, braces, etc.)
+                stripped = line.strip()
+                if not stripped or stripped in ['{', '}', '[', ']', ','] or stripped.startswith('"') and stripped.endswith('",') or stripped.endswith('":'):
+                    cleaned_lines.append(line)
+                    continue
+
+                # For lines that contain actual content, escape problematic characters
+                if '"' in line:
+                    # Find the content between the first and last quote on this line
+                    first_quote = line.find('"')
+                    last_quote = line.rfind('"')
+
+                    if first_quote != -1 and last_quote != -1 and first_quote != last_quote:
+                        # Extract the part before first quote, the content, and after last quote
+                        before = line[:first_quote + 1]  # Include the opening quote
+                        content = line[first_quote + 1:last_quote]
+                        after = line[last_quote:]  # Include the closing quote and rest
+
+                        # Escape quotes and backslashes in the content
+                        escaped_content = content.replace('\\', '\\\\').replace('"', '\\"')
+                        cleaned_lines.append(before + escaped_content + after)
+                    else:
+                        cleaned_lines.append(line)
+                else:
+                    cleaned_lines.append(line)
+
+            return '\n'.join(cleaned_lines)
+
+        except Exception as e:
+            print(f"Error in quote escaping: {e}")
+            # Fallback to simple replacement
+            return json_str.replace('\\"', '"').replace('\\\\', '\\')
+
+    def _fix_common_json_issues(self, json_str):
+        """Fix common JSON formatting issues"""
+        # Fix trailing commas
+        json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+
+        # Fix missing commas between objects
+        json_str = re.sub(r'}(\s*){', r'},', json_str)
+
+        # Fix missing commas between arrays
+        json_str = re.sub(r'](\s*)(\[)', r'],\1\2', json_str)
+
+        # Fix boolean values
+        json_str = re.sub(r'\bTrue\b', 'true', json_str)
+        json_str = re.sub(r'\bFalse\b', 'false', json_str)
+        json_str = re.sub(r'\bNone\b', 'null', json_str)
+
+        return json_str
+
+    def _extract_json_fallback(self, response_text):
+        """Fallback method to extract JSON when parsing fails"""
+        print(f"Attempting fallback JSON extraction from response text...")
+
+        # Try to extract cover letter
+        cover_letter_match = re.search(r'"cover_letter"\s*:\s*"([^"]*(?:\\.[^"]*)*)"', response_text, re.DOTALL)
+        if cover_letter_match:
+            cover_letter = cover_letter_match.group(1)
+            # Unescape the content
+            cover_letter = cover_letter.replace('\\"', '"').replace('\\\\', '\\').replace('\\n', '\n')
+        else:
+            cover_letter = 'Error: Could not parse AI response'
+
+        # Try to extract match score
+        match_score_match = re.search(r'"match_score"\s*:\s*(\d+)', response_text)
+        match_score = int(match_score_match.group(1)) if match_score_match else 0
+
+        # Try to extract match score analysis
+        analysis_match = re.search(r'"match_score_analysis"\s*:\s*({[^}]*})', response_text, re.DOTALL)
+        if analysis_match:
+            try:
+                analysis = json.loads(analysis_match.group(1))
+            except:
+                analysis = {
+                    'strengths': 'Error parsing analysis',
+                    'gaps': 'Error parsing analysis',
+                    'justification': 'Error parsing analysis'
+                }
+        else:
+            analysis = {
+                'strengths': 'Error parsing analysis',
+                'gaps': 'Error parsing analysis',
+                'justification': 'Error parsing analysis'
+            }
+
+        # Try to extract paragraphs if present
+        paragraphs = {}
+        if 'customized_paragraphs' in response_text:
+            para_matches = re.findall(r'"([^"]+)"\s*:\s*"([^"]*(?:\\.[^"]*)*)"', response_text)
+            for key, value in para_matches:
+                if key.startswith('paragraph') or len(key) < 50:  # Likely a paragraph key
+                    # Unescape the value
+                    unescaped_value = value.replace('\\"', '"').replace('\\\\', '\\').replace('\\n', '\n')
+                    paragraphs[key] = unescaped_value
+
+        result = {
+            'customized_paragraphs': paragraphs,
+            'cover_letter': cover_letter,
+            'match_score': match_score,
+            'match_score_analysis': analysis
+        }
+
+        print(f"Fallback extraction successful: {bool(cover_letter != 'Error: Could not parse AI response')}")
+        return result
+
     # MODIFIED: Logic to handle custom prompts
     def _get_prompt(self, prompt_key, custom_prompts_dict, placeholders):
         default_prompts = {
-            "paragraphs": """You are an expert career coach and professional resume writer. Your task is to transform the provided resume paragraphs to be compelling and tailored for the target role. Return a single, valid JSON object.
+            "paragraphs": """ROLE:
+You are an elite Career Strategist and Certified Professional Resume Writer (CPRW) with deep expertise in Applicant Tracking System (ATS) optimization and modern recruitment psychology. Your specialization is reverse-engineering job descriptions to create compelling career narratives that bypass algorithmic filters and resonate with hiring managers at top-tier companies like {COMPANY}.
+
+OBJECTIVE:
+Your mission is to strategically re-engineer the provided resume paragraphs. Transform them from passive descriptions of duties into high-impact, quantified statements of achievement. The rewritten paragraphs must be meticulously tailored to the target job description, demonstrating an undeniable fit for the role.
+
+CONTEXTUAL INPUTS:
+
+COMPANY: {COMPANY}
+
+TARGET JOB DESCRIPTION: {JOB_DESCRIPTION}
+
+PARAGRAPHS FOR TRANSFORMATION ({PARAGRAPH_COUNT} total): {SELECTED_PARAGRAPHS_JSON}
+
+MAXIMUM TOTAL CHARACTER COUNT: {TOTAL_CHAR_LIMIT}
+
+EXECUTION DIRECTIVES:
+
+ATS & Keyword Optimization (Primary Directive):
+
+Analyze & Map: First, meticulously parse the {JOB_DESCRIPTION} to identify primary and secondary keywords. This includes hard skills (e.g., software, technical methodologies), soft skills (e.g., 'strategic planning', 'cross-functional collaboration'), and key qualifications.
+
+Semantic Integration: Do not merely "stuff" keywords. Integrate them naturally and semantically. If the JD mentions "managing budgets," use related powerful phrases like "financial oversight," "P&L management," or "resource allocation" if supported by the original text.
+
+Mirror Language: Reflect the specific terminology and professional tone used by {COMPANY} in the job description to create a sense of immediate cultural and professional alignment.
+
+Quantification & Impact Framing (Secondary Directive):
+
+Employ the STAR/PAR Method: Restructure every possible statement to follow the Problem-Action-Result (or Situation-Task-Action-Result) framework. Focus on the outcome of the actions.
+
+Introduce Metrics: Where the original text implies an achievement, quantify it. Use metrics such as percentages (e.g., increased efficiency by 15%), monetary values (e.g., managed a £500K budget), scale (e.g., led a team of 10), or time saved (e.g., reduced processing time by 2 days). The goal is to translate responsibilities into measurable results.
+
+Lead with Impact: Begin sentences with a powerful, diverse action verb that immediately signals achievement (e.g., "Orchestrated," "Engineered," "Spearheaded," "Maximized," "Revitalized"). Avoid passive language ("Responsible for...") and low-impact verbs ("Led," "Managed") where a stronger alternative exists.
+
+Structural & Stylistic Integrity:
+
+Conciseness: Eliminate filler words and redundant phrases. Each word must serve a purpose.
+
+High-Fidelity Transformation: You must adhere strictly to the achievements and experiences present in the original {SELECTED_PARAGRAPHS_JSON}. Enhance and reframe, but never fabricate new data, skills, or outcomes.
+
+Adhere to Constraints: The combined character count of all transformed paragraphs must not exceed the {TOTAL_CHAR_LIMIT}. The output must be a direct one-to-one transformation of the provided paragraph IDs.
+
+CRITICAL FINAL CHECK:
+Before finalizing, review the rewritten paragraphs against the {JOB_DESCRIPTION} one last time. Ask: "Does this text make the candidate look like the perfect solution to the problems and needs outlined in this job description?" The answer must be an unequivocal "yes."
+""",
+            "single_paragraph": """ROLE:
+You are an elite Career Strategist and Certified Professional Resume Writer (CPRW) with deep expertise in Applicant Tracking System (ATS) optimization and modern recruitment psychology. Your specialization is reverse-engineering job descriptions to create compelling career narratives that bypass algorithmic filters and resonate with hiring managers at top-tier companies like {COMPANY}.
+
+OBJECTIVE:
+Your mission is to strategically re-engineer a single resume paragraph. Transform it from a passive description of duties into a high-impact, quantified statement of achievement. The rewritten paragraph must be meticulously tailored to the target job description, demonstrating an undeniable fit for the role.
+
+CONTEXTUAL INPUTS:
+
+COMPANY: {COMPANY}
+
+TARGET JOB DESCRIPTION: {JOB_DESCRIPTION}
+
+ORIGINAL PARAGRAPH FOR TRANSFORMATION: "{ORIGINAL_PARAGRAPH}"
+
+MAXIMUM WORD COUNT: {WORD_LIMIT}
+
+EXECUTION DIRECTIVES:
+
+ATS & Keyword Optimization (Primary Directive):
+
+Analyze & Map: First, meticulously parse the {JOB_DESCRIPTION} to identify primary and secondary keywords. This includes hard skills (e.g., software, technical methodologies), soft skills (e.g., 'strategic planning', 'cross-functional collaboration'), and key qualifications.
+
+Semantic Integration: Do not merely "stuff" keywords. Integrate them naturally and semantically. If the JD mentions "managing budgets," use related powerful phrases like "financial oversight," "P&L management," or "resource allocation" if supported by the original text.
+
+Mirror Language: Reflect the specific terminology and professional tone used by {COMPANY} in the job description to create a sense of immediate cultural and professional alignment.
+
+Quantification & Impact Framing (Secondary Directive):
+
+Employ the STAR/PAR Method: Restructure the statement to follow the Problem-Action-Result (or Situation-Task-Action-Result) framework. Focus on the outcome of the actions.
+
+Introduce Metrics: Where the original text implies an achievement, quantify it. Use metrics such as percentages (e.g., increased efficiency by 15%), monetary values (e.g., managed a £500K budget), scale (e.g., led a team of 10), or time saved (e.g., reduced processing time by 2 days). The goal is to translate responsibilities into measurable results.
+
+Lead with Impact: Begin the paragraph with a powerful, diverse action verb that immediately signals achievement (e.g., "Orchestrated," "Engineered," "Spearheaded," "Maximized," "Revitalized"). Avoid passive language ("Responsible for...") and low-impact verbs ("Led," "Managed") where a stronger alternative exists.
+
+Structural & Stylistic Integrity:
+
+Conciseness: Eliminate filler words and redundant phrases. Each word must serve a purpose.
+
+High-Fidelity Transformation: You must adhere strictly to the achievements and experiences present in the original paragraph. Enhance and reframe, but never fabricate new data, skills, or outcomes.
+
+Adhere to Constraints: The transformed paragraph must not exceed {WORD_LIMIT} words. Maintain a similar length to the original while dramatically improving impact and relevance.
+
+CRITICAL FINAL CHECK:
+Before finalizing, review the rewritten paragraph against the {JOB_DESCRIPTION} one last time. Ask: "Does this text make the candidate look like the perfect solution to the problems and needs outlined in this job description?" The answer must be an unequivocal "yes."
+""",
+            "cover_letter": """ROLE: You are an Expert Career Strategist and Recruitment Analyst. Your expertise lies in dissecting job descriptions and resumes to create compelling application materials and provide a rigorous, objective analysis of a candidate's viability. You do not sugarcoat; your feedback is direct, evidence-based, and actionable.
+
+MISSION: Your mission is to perform a two-part task based on the provided context. First, you will write a world-class cover letter that positions the candidate as the ideal solution to the company's needs. Second, you will conduct a brutally honest, data-driven analysis to score the candidate's match for the role, identifying both strengths and critical gaps.
+
 CONTEXT:
-- COMPANY: {COMPANY}
-- TARGET JOB DESCRIPTION:
-{JOB_DESCRIPTION}
 
-TASK: TRANSFORM {PARAGRAPH_COUNT} RESUME PARAGRAPHS
-- SELECTED PARAGRAPHS (as a JSON object of id:text):
-{SELECTED_PARAGRAPHS_JSON}
-- GUIDELINES: Inject hard and soft skill keywords from the JD wherever possible. Keep action word repetition low. Restructure sentences for maximum impact and flow. Use strong action verbs, quantify achievements, and align experiences with the target role.
-- CRITICAL: Only enhance what's there. Never fabricate new achievements. The total word count for all transformed paragraphs must not exceed {TOTAL_WORD_LIMIT}.
+COMPANY: {COMPANY}
 
-CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:
-{JSON_STRUCTURE}""",
-            "single_paragraph": """You are an expert career coach and professional resume writer. Your task is to transform the provided resume paragraphs to be compelling and tailored for the target role. Return a single, valid JSON object.
-CONTEXT:
-- COMPANY: {COMPANY}
-- TARGET JOB DESCRIPTION:
-{JOB_DESCRIPTION}
+TARGET JOB DESCRIPTION: {JOB_DESCRIPTION}
 
-TASK: TRANSFORM A SINGLE PARAGRAPH
-- ORIGINAL PARAGRAPH: "{ORIGINAL_PARAGRAPH}"
-- GUIDELINES: Dramatically improve the paragraph by restructuring sentences for impact, using strong action verbs, quantifying achievements, and integrating keywords from the job description. Maintain a confident, results-oriented tone.
-- CRITICAL: Only enhance what's there. Do not fabricate new achievements. The new paragraph must be a similar length, not exceeding {WORD_LIMIT} words.
+FULL RESUME TEXT: {FULL_RESUME_TEXT}
 
-CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:
-{JSON_STRUCTURE}""",
-            "cover_letter": """You are an expert career coach. Your task is to write a cover letter, provide a job match score, and analyze the match based on the provided context. Return a single, valid JSON object.
-CONTEXT:
-- COMPANY: {COMPANY}
-- TARGET JOB DESCRIPTION:
-{JOB_DESCRIPTION}
-- FULL RESUME TEXT:
-{FULL_RESUME_TEXT}
+TASK: GENERATE COVER LETTER & STRATEGIC MATCH ANALYSIS
 
-TASK: WRITE COVER LETTER, PROVIDE MATCH SCORE & ANALYSIS
-- Write a compelling, professional cover letter (3-4 paragraphs, 250-300 words).
-- Provide a brutally honest job match score (1-100).
-- Provide a detailed analysis of the match (2-3 sentences explaining the score rationale).
-- GUIDELINES: Use a professional tone, show knowledge of the company, and highlight key achievements from the resume. Use plain text only with NO MARKDOWN.
-- Match Score (1–100): 90–100 = exceptional; 80–89 = strong; 70–79 = good; below 70 = moderate to weak.
-- Analysis: Explain what factors contributed to the score, highlighting specific skill matches, experience alignment, and any gaps.
+PART 1: THE COVER LETTER (250-300 words)
 
-CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:
-{JSON_STRUCTURE}""",
-            "interview_prep": """You are an expert career coach and interview preparation specialist. Your task is to generate a comprehensive set of interview questions and exemplary answers based on the candidate's resume and the target job description. Return a single, valid JSON object.
-CONTEXT:
-- COMPANY: {COMPANY}
-- TARGET ROLE: {JOB_TITLE}
-- TARGET JOB DESCRIPTION:
-{JOB_DESCRIPTION}
-- CANDIDATE'S FULL RESUME TEXT:
-{FULL_RESUME_TEXT}
+Your writing must be concise, confident, and meticulously tailored.
+
+Opening Hook: Do not start with a generic "I am writing to apply...". Instead, create a powerful opening statement that immediately connects the candidate's most significant achievement or core competency to a specific company goal, value, or a challenge implied in the job description.
+
+Body Paragraphs (The "Proof"):
+
+Synthesize the top 2-3 requirements from the {JOB_DESCRIPTION}.
+
+For each requirement, extract a specific, quantifiable achievement from the {FULL_RESUME_TEXT} that directly proves the candidate's capability.
+
+Weave these proofs into a narrative. Use the Problem-Action-Result (PAR) framework. For example: "At my previous role, I addressed the challenge of [Problem] by implementing [Action], which resulted in a [Quantifiable Result]."
+
+Subtly integrate knowledge of {COMPANY}'s products, recent news, or mission to demonstrate genuine interest beyond the job posting.
+
+Closing & Call to Action: Conclude with a confident statement summarizing the candidate's value proposition. End with a proactive call to action, expressing eagerness to discuss how their specific skills can contribute to the company's upcoming projects or goals.
+
+PART 2: THE JOB MATCH ANALYSIS
+
+Your analysis must be objective and unflinching. Avoid platitudes.
+
+Job Match Score (1-100): Provide a single integer score based on the following rubric.
+
+90-100 (Exceptional): Candidate exceeds most core requirements, meets all preferred qualifications, and possesses unique value-adds. The resume provides quantifiable proof of high performance in directly comparable tasks.
+
+80-89 (Strong): Candidate meets all core requirements and most preferred qualifications. There is a clear and direct mapping between resume experience and job duties.
+
+70-79 (Good): Candidate meets the majority of core requirements but may be missing some preferred qualifications or lack direct experience in a specific domain. The candidacy is solid but not flawless.
+
+Below 70 (Moderate to Weak): Candidate is missing one or more core requirements. The experience is adjacent or requires significant upskilling. This represents a substantial reach for the candidate.
+
+Match Score Analysis: Provide a detailed rationale for your score, structured in the following three sections:
+
+Strengths of Candidacy: Itemize the strongest points of alignment. Quote specific phrases from the {JOB_DESCRIPTION} and directly map them to accomplishments or skills listed in the {FULL_RESUME_TEXT}.
+
+Potential Gaps / Weaknesses: Identify and explicitly state any significant misalignments. Where does the resume fall short? Note missing technologies, insufficient years of experience in a key area, lack of industry-specific context, or any other core requirement that is not fully substantiated by the resume.
+
+Score Justification: Conclude with a summary paragraph that synthesizes the strengths and weaknesses to explain precisely why the specific score was assigned. For example, "The score of 82 reflects the candidate's exceptional alignment with core technical skills A and B, but is tempered by the lack of direct experience with industry-specific software C, which is listed as a preferred qualification."
+""",
+            "interview_prep": """You are to act as an elite Tier-1 career coach and interview strategist. Your expertise is in meticulously deconstructing a candidate's history against a target role's requirements to forge a powerful, compelling interview narrative. You do not generate generic questions; you create a bespoke interrogation plan designed to highlight the candidate's unique strengths and proactively address potential weaknesses.
+
+PRIMARY OBJECTIVE:
+
+Analyze the provided {FULL_RESUME_TEXT} in the context of the {JOB_DESCRIPTION} for the {JOB_TITLE} role at {COMPANY}. Your goal is to produce a set of highly targeted interview questions and exemplary answers that will strategically position the candidate for success. The output must be a single, valid JSON object.
+
+ANALYTICAL FRAMEWORK (Your Internal Process):
+
+Resume-to-JD Synergy and Gap Analysis: First, perform a deep comparison. Identify the top 3-5 areas where the candidate's resume shows exceptional alignment with the job description's core requirements. Conversely, identify any potential "red flags" or gaps—such as a non-traditional career path, a noticeable employment gap, a potential lack of experience in a key area mentioned in the JD, or frequent job changes.
+
+Strategic Narrative Formulation: Based on your analysis, determine the central narrative the candidate should convey. This narrative should be woven through all the answers. For example, is it a story of "the technical expert pivoting to leadership," "the generalist now specializing," or "the problem-solver who thrives in chaotic environments"?
 
 TASK: GENERATE INTERVIEW QUESTIONS & ANSWERS
-Generate two distinct categories of questions. For each question, provide both 'talking_points' (a bulleted list of key ideas to convey) and a complete sample 'answer'.
 
-1.  **General Questions (5 questions):** Tailored to the candidate's specific resume. Scrutinize their career path, skills, and experiences (e.g., job gaps, career changes, specific projects).
-2.  **Role-Based Questions (5 questions):** Highly specific to the technical and functional requirements of the job description, framed in the context of the candidate's resume.
+Based on your analysis, generate two distinct categories of questions. For each question, provide both 'talking_points' (the strategic pillars of the response) and a complete sample 'answer' (a polished, first-person narrative).
 
-CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure. Do not add any text or markdown before or after the JSON object.
-{JSON_STRUCTURE}"""
+Category 1: General & Career Narrative Questions (5 Questions)
+
+Mandate: These questions must stem directly from your analysis of the candidate's career trajectory as presented in the resume. They should probe their motivations, rationale for key transitions, and self-awareness. Target the potential "red flags" you identified, framing them as opportunities for the candidate to demonstrate growth, resilience, or strategic thinking. Do not ask generic questions like "Tell me about yourself." Instead, ask pointed questions like, "I noticed you transitioned from [Industry/Role A] to [Industry/Role B]. What catalyzed that specific change, and how did it prepare you for the challenges outlined in our job description?"
+
+Answer Construction: The answers here should solidify the candidate's career narrative. They must explain the "why" behind their decisions, connecting past experiences to their future ambitions for this specific role.
+
+Category 2: Role-Based & Behavioral Questions (5 Questions)
+
+Mandate: These questions must be surgical strikes that connect a specific, critical requirement from the {JOB_DESCRIPTION} with a concrete project or achievement from the {FULL_RESUME_TEXT}. Frame the questions behaviorally to compel storytelling. For example, instead of "Do you have experience with X?", ask, "The job requires extensive experience with [Tool/Skill X from JD]. Describe your most challenging project from your time at [Company from Resume] where you leveraged this skill to overcome a significant obstacle."
+
+Answer Construction: The answers MUST implicitly or explicitly follow the STAR method (Situation, Task, Action, Result).
+
+Situation: Briefly set the context of the project or challenge.
+
+Task: Describe the specific goal or objective you were responsible for.
+
+Action: Detail the specific, individual steps you took to address the task. This is the most important part.
+
+Result: Quantify the outcome. Use metrics, data, and tangible business impact (e.g., "reduced latency by 30%", "increased user engagement by 15%", "saved the project $50k in operational costs"). The result must tie back to the value sought in the job description.
+
+QUALITY DIRECTIVES:
+
+No Generic Content: Every question and answer must be rigorously tailored to the provided resume and job description.
+
+Strategic Talking Points: The talking_points should not be a mere summary of the answer. They should be concise, strategic bullet points outlining the core message and the key skills being demonstrated (e.g., "Demonstrate proactive problem-solving," "Highlight quantitative impact," "Connect past project to this company's specific needs").
+
+Authentic Voice: The sample answer should be written in a confident, professional, and natural first-person voice. It should be comprehensive but not verbose."""
         }
 
         # Get the base prompt (custom or default)
@@ -341,7 +640,7 @@ CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with t
         elif prompt_key == 'single_paragraph':
             json_requirement = "\n\nCRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:\n" + placeholders.get('JSON_STRUCTURE', '{ "enhanced_text": "The new, enhanced paragraph text here..." }')
         elif prompt_key == 'cover_letter':
-            json_requirement = "\n\nCRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:\n" + placeholders.get('JSON_STRUCTURE', '{\n  "cover_letter": "The full cover letter text here...",\n  "match_score": 85,\n  "match_score_analysis": "Detailed analysis of the match score rationale..."\n}')
+            json_requirement = "\n\nCRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:\n" + placeholders.get('JSON_STRUCTURE', '{\n  "cover_letter": "The full cover letter text here...",\n  "match_score": 85,\n  "match_score_analysis": {\n    "strengths": "Strengths of candidacy...",\n    "gaps": "Potential gaps and weaknesses...",\n    "justification": "Score justification..."\n  }\n}')
         elif prompt_key == 'interview_prep':
             json_requirement = "\n\nCRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure. Do not add any text or markdown before or after the JSON object.\n" + placeholders.get('JSON_STRUCTURE', '{\n  "general_questions": [\n    { "question": "...", "talking_points": ["..."], "answer": "..." }\n  ],\n  "role_based_questions": [\n    { "question": "...", "talking_points": ["..."], "answer": "..." }\n  ]\n}')
 
@@ -378,12 +677,51 @@ CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with t
         
         return self._call_gemini_api(model, prompt)
 
+    def _reconstruct_resume_with_enhanced_paragraphs(self, resume_data, enhanced_paragraphs):
+        """
+        Reconstruct the full resume text by replacing enhanced paragraphs while preserving
+        all other content, formatting, and structure.
+        """
+        if not enhanced_paragraphs:
+            return resume_data
+
+        # Create a mapping of original text to enhanced text
+        text_replacements = {original: enhanced for original, enhanced in enhanced_paragraphs.items()}
+
+        # Split the full text into lines to preserve structure
+        lines = resume_data['full_text'].split('\n')
+        reconstructed_lines = []
+
+        for line in lines:
+            original_line = line.strip()
+            # Check if this line contains any of our paragraphs to replace
+            for original_text, enhanced_text in text_replacements.items():
+                if original_text.strip() in original_line:
+                    # Replace the paragraph content while preserving indentation/formatting
+                    if original_line == original_text.strip():
+                        # Exact match - replace entire line
+                        reconstructed_lines.append(line.replace(original_text, enhanced_text))
+                    else:
+                        # Partial match - try to replace just the paragraph portion
+                        # This handles cases where paragraphs might have slight formatting differences
+                        reconstructed_lines.append(line.replace(original_text, enhanced_text))
+                    break
+            else:
+                # No replacement needed for this line
+                reconstructed_lines.append(line)
+
+        # Reconstruct the resume data with enhanced text
+        enhanced_resume_data = resume_data.copy()
+        enhanced_resume_data['full_text'] = '\n'.join(reconstructed_lines)
+
+        return enhanced_resume_data
+
     def _generate_cover_letter(self, model, resume_data, job_description, company_name, custom_prompts):
         placeholders = {
             'COMPANY': company_name,
             'JOB_DESCRIPTION': job_description,
-            'FULL_RESUME_TEXT': resume_data['full_text'],
-            'JSON_STRUCTURE': '{\n  "cover_letter": "The full cover letter text here...",\n  "match_score": 85,\n  "match_score_analysis": "Detailed analysis of the match score rationale..."\n}'
+            'FULL_RESUME_TEXT': resume_data['full_text'],  # Now uses enhanced text
+            'JSON_STRUCTURE': '{\n  "cover_letter": "The full cover letter text here...",\n  "match_score": 85,\n  "match_score_analysis": {\n    "strengths": "Strengths of candidacy...",\n    "gaps": "Potential gaps and weaknesses...",\n    "justification": "Score justification..."\n  }\n}'
         }
         prompt = self._get_prompt('cover_letter', custom_prompts, placeholders)
         return self._call_gemini_api(model, prompt)
@@ -411,10 +749,23 @@ CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with t
                             print(f"!! DEBUG WARNING: AI returned paragraph ID '{pid}' which was not found. Skipping.")
 
             if do_cover_letter:
-                cl_result = self._generate_cover_letter(model, resume_data, job_description, company_name, custom_prompts)
+                # NEW: Reconstruct resume text with enhanced paragraphs before generating cover letter
+                enhanced_resume_data = self._reconstruct_resume_with_enhanced_paragraphs(resume_data, final_output['customized_paragraphs'])
+                cl_result = self._generate_cover_letter(model, enhanced_resume_data, job_description, company_name, custom_prompts)
                 final_output['cover_letter'] = cl_result.get('cover_letter')
                 final_output['match_score'] = cl_result.get('match_score')
-                final_output['match_score_analysis'] = cl_result.get('match_score_analysis')
+                # Handle both old string format and new structured format for backward compatibility
+                match_analysis = cl_result.get('match_score_analysis')
+                if isinstance(match_analysis, dict):
+                    # New structured format
+                    final_output['match_score_analysis'] = match_analysis
+                else:
+                    # Old string format - convert to structured for consistency
+                    final_output['match_score_analysis'] = {
+                        'strengths': match_analysis or '',
+                        'gaps': '',
+                        'justification': 'Analysis converted from legacy format'
+                    }
 
             return final_output
         except Exception as e:
@@ -448,7 +799,22 @@ CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with t
             raise Exception(f"Error generating interview prep materials: {str(e)}")
 
     def update_docx_with_customizations(self, original_file_path, customizations):
+        # Handle case where customized_paragraphs might be a JSON string from database
         customized_paragraphs_dict = customizations.get('customized_paragraphs', {})
+
+        # If it's a string (from database), parse it back to dict
+        if isinstance(customized_paragraphs_dict, str):
+            try:
+                customized_paragraphs_dict = json.loads(customized_paragraphs_dict)
+            except json.JSONDecodeError:
+                print(f"Warning: Could not parse customized_paragraphs JSON string: {customized_paragraphs_dict}")
+                customized_paragraphs_dict = {}
+
+        # Ensure it's a dictionary
+        if not isinstance(customized_paragraphs_dict, dict):
+            print(f"Warning: customized_paragraphs is not a dict: {type(customized_paragraphs_dict)}")
+            customized_paragraphs_dict = {}
+
         try:
             doc = Document(original_file_path)
             for para in doc.paragraphs:
@@ -477,7 +843,7 @@ CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with t
                     para.add_run(para_text.strip())
 
             # Save to temporary file
-            temp_path = tempfile.mktemp(suffix='.docx')
+            temp_path = tempfile.mktemp(suffix='_resume.docx')
             doc.save(temp_path)
             return temp_path
 
@@ -485,33 +851,86 @@ CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with t
             raise Exception(f"Error creating cover letter DOCX: {str(e)}")
 
     def convert_docx_to_pdf(self, docx_path, output_filename):
+        """Convert DOCX to PDF using a method that works in Celery workers"""
         try:
-            # Initialize COM with better error handling
-            pythoncom.CoInitialize()
-
-            # Import docx2pdf and perform conversion
-            from docx2pdf import convert
             pdf_filename = f"{output_filename}.pdf"
             pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], pdf_filename)
 
             print(f"Attempting PDF conversion: {docx_path} -> {pdf_path}")
 
-            # Perform the conversion
-            convert(docx_path, pdf_path)
+            # Try multiple PDF conversion methods
+            conversion_success = False
 
-            # Verify the PDF was created successfully
-            if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
-                print(f"PDF conversion successful: {pdf_path}")
+            # Method 1: Try docx2pdf with better error handling (preserves formatting best)
+            try:
+                pythoncom.CoInitialize()
+                from docx2pdf import convert
+                convert(docx_path, pdf_path)
+
+                if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
+                    print(f"PDF conversion successful using docx2pdf: {pdf_path}")
+                    conversion_success = True
+                else:
+                    raise Exception("PDF file was not created or is empty")
+
+            except Exception as e:
+                print(f"docx2pdf failed: {e}")
+                # Try method 2: Use pypandoc with DOCX as intermediate format
+                try:
+                    import pypandoc
+
+                    # First convert DOCX to DOCX (this preserves formatting)
+                    # Then convert to PDF
+                    temp_docx_path = tempfile.mktemp(suffix='.docx')
+
+                    # Use pandoc to convert DOCX to PDF with better formatting preservation
+                    output = pypandoc.convert_file(
+                        docx_path,
+                        'pdf',
+                        outputfile=pdf_path,
+                        extra_args=[
+                            '--pdf-engine=pdflatex',  # Use LaTeX for better formatting
+                            '--standalone',           # Create standalone document
+                            '--self-contained',       # Embed all resources
+                            '--number-sections',      # Number sections
+                            '--toc',                  # Table of contents
+                            '--toc-depth=2',          # TOC depth
+                        ]
+                    )
+
+                    if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
+                        print(f"PDF conversion successful using pypandoc with LaTeX: {pdf_path}")
+                        conversion_success = True
+                    else:
+                        raise Exception("PDF file was not created or is empty")
+
+                except ImportError:
+                    print("pypandoc not available")
+                except Exception as e2:
+                    print(f"pypandoc failed: {e2}")
+                    # Try method 3: Simple pypandoc conversion
+                    try:
+                        import pypandoc
+                        output = pypandoc.convert_file(docx_path, 'pdf', outputfile=pdf_path)
+                        if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
+                            print(f"PDF conversion successful using simple pypandoc: {pdf_path}")
+                            conversion_success = True
+                        else:
+                            raise Exception("PDF file was not created or is empty")
+                    except Exception as e3:
+                        print(f"Simple pypandoc also failed: {e3}")
+
+            finally:
+                # Always clean up COM
+                try:
+                    pythoncom.CoUninitialize()
+                except:
+                    pass
+
+            if conversion_success:
                 return pdf_path, pdf_filename
             else:
-                raise Exception("PDF file was not created or is empty")
-
-        except ImportError as e:
-            print(f"docx2pdf import failed: {e}. Falling back to DOCX.")
-            docx_filename = f"{output_filename}.docx"
-            final_docx_path = os.path.join(app.config['UPLOAD_FOLDER'], docx_filename)
-            shutil.copy2(docx_path, final_docx_path)
-            return final_docx_path, docx_filename
+                raise Exception("All PDF conversion methods failed")
 
         except Exception as e:
             print(f"PDF conversion failed: {e}. Falling back to DOCX.")
@@ -534,13 +953,16 @@ CRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with t
             shutil.copy2(docx_path, final_docx_path)
             return final_docx_path, docx_filename
 
-        finally:
-            # Always uninitialize COM
-            try:
-                pythoncom.CoUninitialize()
-                print("COM uninitialized successfully")
-            except Exception as e:
-                print(f"Warning: COM uninitialization failed: {e}")
+    def convert_docx_to_docx(self, docx_path, output_filename):
+        """Simple function to just copy DOCX file - for when user explicitly requests DOCX"""
+        try:
+            docx_filename = f"{output_filename}.docx"
+            final_docx_path = os.path.join(app.config['UPLOAD_FOLDER'], docx_filename)
+            shutil.copy2(docx_path, final_docx_path)
+            print(f"DOCX copy successful: {final_docx_path}")
+            return final_docx_path, docx_filename
+        except Exception as e:
+            raise Exception(f"Error copying DOCX file: {str(e)}")
 
 processor = ResumeProcessor()
 
@@ -561,7 +983,7 @@ def initialize_system():
             try:
                 temp_doc = Document()
                 temp_doc.add_paragraph("Initialization test")
-                temp_path = tempfile.mktemp(suffix='.docx')
+                temp_path = tempfile.mktemp(suffix='_resume.docx')
                 temp_doc.save(temp_path)
                 os.remove(temp_path)
                 print("✅ COM initialization complete")
@@ -797,24 +1219,76 @@ def delete_resume(resume_id):
 
 @app.route('/api/applications', methods=['POST'])
 def save_application():
-    data = request.get_json()
-    resume = Resume.query.get_or_404(data.get('resume_id'))
-    new_app = Application(
-        company_name=data.get('company_name'),
-        job_title=data.get('job_title'),  # Add job title from scraped JD
-        job_description=data.get('job_description', ''),
-        status=data.get('status', 'not_applied'),
-        match_score=data.get('match_score'),
-        match_score_analysis=data.get('match_score_analysis'),  # New field
-        cover_letter=data.get('cover_letter'),
-        customized_paragraphs=data.get('customized_paragraphs'),
-        job_posting_url=data.get('job_posting_url'),  # Add job posting URL
-        user_session_id=session.get('user_session_id'),
-        resume_id=resume.id
-    )
-    db.session.add(new_app)
-    db.session.commit()
-    return jsonify(new_app.to_dict())
+    try:
+        data = request.get_json()
+        print(f"DEBUG: Saving application with data keys: {list(data.keys()) if data else 'None'}")
+
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+
+        resume = Resume.query.get_or_404(data.get('resume_id'))
+
+        # Convert match_score_analysis to JSON string if it's an object
+        match_score_analysis = data.get('match_score_analysis')
+        print(f"DEBUG: match_score_analysis type: {type(match_score_analysis)}")
+        print(f"DEBUG: match_score_analysis value: {str(match_score_analysis)[:200]}...")
+
+        if match_score_analysis is not None:
+            if isinstance(match_score_analysis, dict):
+                print(f"DEBUG: Converting dict to JSON string")
+                match_score_analysis = json.dumps(match_score_analysis, ensure_ascii=False)
+                print(f"DEBUG: Converted to: {str(match_score_analysis)[:200]}...")
+            elif isinstance(match_score_analysis, str):
+                print(f"DEBUG: Already a string, keeping as-is")
+            else:
+                print(f"DEBUG: Converting other type to string")
+                match_score_analysis = str(match_score_analysis)
+
+        # Convert customized_paragraphs to JSON string if it's an object
+        customized_paragraphs = data.get('customized_paragraphs')
+        print(f"DEBUG: customized_paragraphs type: {type(customized_paragraphs)}")
+
+        if customized_paragraphs is not None:
+            if isinstance(customized_paragraphs, dict):
+                print(f"DEBUG: Converting customized_paragraphs dict to JSON string")
+                customized_paragraphs = json.dumps(customized_paragraphs, ensure_ascii=False)
+                print(f"DEBUG: Converted customized_paragraphs to: {str(customized_paragraphs)[:200]}...")
+            elif isinstance(customized_paragraphs, str):
+                print(f"DEBUG: customized_paragraphs already a string, keeping as-is")
+            else:
+                print(f"DEBUG: Converting customized_paragraphs other type to string")
+                customized_paragraphs = str(customized_paragraphs)
+
+        print(f"DEBUG: Final types - match_score_analysis: {type(match_score_analysis)}, customized_paragraphs: {type(customized_paragraphs)}")
+
+        new_app = Application(
+            company_name=data.get('company_name'),
+            job_title=data.get('job_title'),  # Add job title from scraped JD
+            job_description=data.get('job_description', ''),
+            status=data.get('status', 'not_applied'),
+            match_score=data.get('match_score'),
+            match_score_analysis=match_score_analysis,  # Should now be a string
+            cover_letter=data.get('cover_letter'),
+            customized_paragraphs=customized_paragraphs,  # Should now be a string
+            job_posting_url=data.get('job_posting_url'),  # Add job posting URL
+            user_session_id=session.get('user_session_id'),
+            resume_id=resume.id
+        )
+
+        print(f"DEBUG: Created Application object: {new_app.company_name}, {new_app.job_title}")
+
+        db.session.add(new_app)
+        db.session.commit()
+
+        print(f"DEBUG: Application saved successfully with ID: {new_app.id}")
+
+        return jsonify(new_app.to_dict())
+
+    except Exception as e:
+        print(f"ERROR: Failed to save application: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Failed to save application: {str(e)}'}), 500
 
 @app.route('/api/applications', methods=['GET'])
 def get_applications():
@@ -1004,9 +1478,12 @@ def download_resume_file():
     data = request.get_json()
     data['session_id'] = session['user_session_id']
 
-    # Add format preference if specified
-    format_preference = data.get('format', 'pdf')  # Default to PDF
-    data['format'] = format_preference
+    # Handle format preference - don't override if already specified
+    if 'format' not in data:
+        data['format'] = 'pdf'  # Default to PDF only if not specified
+
+    print(f"DEBUG: Download format requested: {data.get('format')}")
+    print(f"DEBUG: Full download data: {data}")
 
     task = celery.send_task('celery_worker.create_download_file_task', args=[data])
     return jsonify({'job_id': task.id})
