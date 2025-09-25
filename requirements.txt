@@ -3,11 +3,14 @@ Flask-Cors
 Flask-Migrate
 Flask-SQLAlchemy
 Flask-SocketIO
-celery[redis]
+redis
+rq
 eventlet
 google-generativeai
 python-docx
 docx2pdf
+pypandoc
 python-dotenv
 pywin32 ; sys_platform == 'win32'
 gunicorn
+psutil

@@ -847,31 +847,6 @@
                                         </div>
                                     </div>
                                 </template>
-                                <template x-if="activeApplication.interview_prep.behavioral_questions && activeApplication.interview_prep.behavioral_questions.length > 0">
-                                    <div class="mb-6">
-                                        <h4 class="text-lg font-semibold mb-3 text-gray-800 border-b pb-2">Behavioral Questions</h4>
-                                        <div class="space-y-3">
-                                            <template x-for="(q, index) in activeApplication.interview_prep.behavioral_questions" :key="'behav-' + index">
-                                                <div class="border rounded-lg p-4 bg-white">
-                                                    <div @click="q.showAnswer = !q.showAnswer" class="flex justify-between items-center cursor-pointer">
-                                                        <p class="font-medium text-gray-800" x-text="q.question"></p>
-                                                        <span class="text-blue-500" x-text="q.showAnswer ? '−' : '+'" ></span>
-                                                    </div>
-                                                    <div x-show="q.showAnswer" x-collapse.duration.300ms class="mt-3 pt-3 border-t">
-                                                        <h5 class="text-sm font-semibold text-gray-600">Talking Points:</h5>
-                                                        <ul class="list-disc list-inside text-sm text-gray-600 space-y-1 my-2 pl-2">
-                                                            <template x-for="point in q.talking_points" :key="point">
-                                                                <li x-text="point"></li>
-                                                            </template>
-                                                        </ul>
-                                                        <h5 class="text-sm font-semibold text-gray-600 mt-3">Sample Answer:</h5>
-                                                        <p class="text-sm text-gray-700 mt-1 bg-gray-50 p-3 rounded" x-text="q.answer"></p>
-                                                    </div>
-                                                </div>
-                                            </template>
-                                        </div>
-                                    </div>
-                                </template>
                             </div>
                         </template>
                     </div>
@@ -2046,7 +2021,6 @@ Authentic Voice: The sample answer should be written in a confident, professiona
                     const addShowAnswer = (q) => ({...q, showAnswer: false});
                     if (prepData.general_questions) prepData.general_questions = prepData.general_questions.map(addShowAnswer);
                     if (prepData.role_based_questions) prepData.role_based_questions = prepData.role_based_questions.map(addShowAnswer);
-                    if (prepData.behavioral_questions) prepData.behavioral_questions = prepData.behavioral_questions.map(addShowAnswer);
                     return prepData;
                 },
                 async viewApplicationDetails(appId) {

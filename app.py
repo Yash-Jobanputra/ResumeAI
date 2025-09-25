@@ -254,30 +254,42 @@ class ResumeProcessor:
                 raise Exception("Empty response from AI model")
 
             response_text = response.text.strip()
-            print(f"AI Response (first 500 chars): {response_text[:500]}")
+
+            # Log full response for debugging (truncate if too long)
+            if len(response_text) > 1000:
+                print(f"AI Response (first 1000 chars of {len(response_text)} total): {response_text[:1000]}")
+                print(f"AI Response (last 1000 chars): {response_text[-1000:]}")
+            else:
+                print(f"AI Response (full {len(response_text)} chars): {response_text}")
 
             # Try to extract JSON from the response
             json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
 
             if json_match:
                 json_str = json_match.group()
-                print(f"Extracted JSON (first 500 chars): {json_str[:500]}")
+                print(f"Extracted JSON (first 1000 chars of {len(json_str)} total): {json_str[:1000]}")
 
                 # Clean the JSON string
                 json_str = self._clean_json_string(json_str)
 
                 try:
-                    return json.loads(json_str, strict=False)
+                    parsed_json = json.loads(json_str, strict=False)
+                    print(f"Successfully parsed JSON with keys: {list(parsed_json.keys()) if isinstance(parsed_json, dict) else 'Not a dict'}")
+                    return parsed_json
                 except json.JSONDecodeError as e:
-                    print(f"JSON decode error: {e}")
+                    print(f"JSON decode error at line {e.lineno}, column {e.colno}: {e.msg}")
+                    print(f"Problematic JSON section: {json_str[max(0, e.pos-100):e.pos+100] if e.pos else 'N/A'}")
                     print(f"Attempting to fix JSON...")
 
                     # Try to fix common JSON issues
                     json_str = self._fix_common_json_issues(json_str)
                     try:
-                        return json.loads(json_str, strict=False)
+                        parsed_json = json.loads(json_str, strict=False)
+                        print(f"Successfully fixed and parsed JSON with keys: {list(parsed_json.keys()) if isinstance(parsed_json, dict) else 'Not a dict'}")
+                        return parsed_json
                     except json.JSONDecodeError as e2:
-                        print(f"Failed to fix JSON: {e2}")
+                        print(f"Failed to fix JSON at line {e2.lineno}, column {e2.colno}: {e2.msg}")
+                        print(f"Problematic section after fix: {json_str[max(0, e2.pos-100):e2.pos+100] if e2.pos else 'N/A'}")
                         # If all else fails, try to extract just the essential parts
                         return self._extract_json_fallback(response_text)
 
@@ -285,17 +297,23 @@ class ResumeProcessor:
             if response_text.startswith('{'):
                 json_str = self._clean_json_string(response_text)
                 try:
-                    return json.loads(json_str, strict=False)
+                    parsed_json = json.loads(json_str, strict=False)
+                    print(f"Successfully parsed full response JSON with keys: {list(parsed_json.keys()) if isinstance(parsed_json, dict) else 'Not a dict'}")
+                    return parsed_json
                 except json.JSONDecodeError as e:
-                    print(f"JSON decode error on full response: {e}")
+                    print(f"JSON decode error on full response at line {e.lineno}, column {e.colno}: {e.msg}")
+                    print(f"Problematic section: {json_str[max(0, e.pos-100):e.pos+100] if e.pos else 'N/A'}")
                     json_str = self._fix_common_json_issues(json_str)
                     try:
-                        return json.loads(json_str, strict=False)
+                        parsed_json = json.loads(json_str, strict=False)
+                        print(f"Successfully fixed and parsed full response JSON with keys: {list(parsed_json.keys()) if isinstance(parsed_json, dict) else 'Not a dict'}")
+                        return parsed_json
                     except json.JSONDecodeError as e2:
-                        print(f"Failed to fix JSON on full response: {e2}")
-                        return self._extract_json_fallback(response_text)
+                        print(f"Failed to fix JSON on full response at line {e2.lineno}, column {e2.colno}: {e2.msg}")
+                        print(f"Problematic section after fix: {json_str[max(0, e2.pos-100):e2.pos+100] if e2.pos else 'N/A'}")
+                        return self._extract_interview_prep_fallback(response_text)
 
-            raise Exception(f"AI response did not contain a valid JSON object. Response: {response_text[:1000]}")
+            raise Exception(f"AI response did not contain a valid JSON object. Response length: {len(response_text)} chars. Response preview: {response_text[:500]}...")
 
         except Exception as e:
             print(f"Error during Gemini API call or JSON parsing: {e}")
@@ -314,6 +332,13 @@ class ResumeProcessor:
         # More robust quote escaping - handle quotes within string values
         # This is more complex because we need to be careful not to break valid JSON
         json_str = self._escape_quotes_in_json(json_str)
+
+        # Additional cleaning for common issues in interview prep responses
+        # Remove any text before the first opening brace and after the last closing brace
+        first_brace = json_str.find('{')
+        last_brace = json_str.rfind('}')
+        if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+            json_str = json_str[first_brace:last_brace+1]
 
         return json_str.strip()
 
@@ -377,7 +402,132 @@ class ResumeProcessor:
         json_str = re.sub(r'\bFalse\b', 'false', json_str)
         json_str = re.sub(r'\bNone\b', 'null', json_str)
 
+        # Fix unescaped quotes in string values - this is the main issue
+        json_str = self._fix_unescaped_quotes(json_str)
+
         return json_str
+
+    def _fix_unescaped_quotes(self, json_str):
+        """Fix unescaped quotes within JSON string values"""
+        try:
+            # More aggressive approach: find all string values and escape them properly
+            # This regex finds string values (content between quotes) while avoiding key names
+            import re
+
+            # Pattern to match string values (not keys) - looks for content after colon and comma
+            # This handles cases like: "key": "value with unescaped 'quotes' in it"
+            string_pattern = r'("[^"]*")\s*:\s*"((?:[^"\\]|\\.)*")'
+
+            def escape_string_content(match):
+                key = match.group(1)  # The key part (e.g., "answer":)
+                content = match.group(2)  # The content part
+
+                # Remove the trailing quote to work with just the content
+                if content.endswith('"'):
+                    content = content[:-1]
+
+                # Escape problematic characters in the content
+                # First, replace any existing backslashes to avoid double escaping
+                escaped_content = content.replace('\\', '\\\\')
+                # Then escape quotes
+                escaped_content = escaped_content.replace('"', '\\"')
+                # Handle newlines, tabs, and other special characters
+                escaped_content = escaped_content.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+
+                return f'{key}: "{escaped_content}"'
+
+            # Apply the fix to key-value pairs
+            fixed_json = re.sub(string_pattern, escape_string_content, json_str)
+
+            # Also handle string values in arrays (like in talking_points)
+            # Pattern to match array elements: "item1", "item with 'quotes'", "item3"
+            array_string_pattern = r',\s*"((?:[^"\\]|\\.)*")(?=\s*[,\]])'
+            single_array_item_pattern = r'\[\s*"((?:[^"\\]|\\.)*)"(?=\s*\])'  # For single item in array
+
+            def escape_array_item(match):
+                content = match.group(1)
+
+                # Remove the trailing quote to work with just the content
+                if content.endswith('"'):
+                    content = content[:-1]
+
+                # Escape problematic characters in the content
+                escaped_content = content.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+
+                return f', "{escaped_content}"'
+
+            def escape_single_array_item(match):
+                content = match.group(1)
+
+                # Remove the trailing quote to work with just the content
+                if content.endswith('"'):
+                    content = content[:-1]
+
+                # Escape problematic characters in the content
+                escaped_content = content.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+
+                return f'["{escaped_content}"'
+
+            # Apply fixes to array elements
+            fixed_json = re.sub(array_string_pattern, escape_array_item, fixed_json)
+            fixed_json = re.sub(single_array_item_pattern, escape_single_array_item, fixed_json)
+
+            # Handle remaining standalone strings that might be unescaped
+            # This is more complex - we'll use a state-based approach to identify string values vs. keys
+            result = []
+            i = 0
+            in_string = False
+            string_start_char = None
+            escape_next = False
+
+            while i < len(fixed_json):
+                char = fixed_json[i]
+
+                if escape_next:
+                    result.append(char)
+                    escape_next = False
+                elif char == '\\':
+                    result.append(char)
+                    escape_next = True
+                elif char in ('"', "'") and not escape_next:
+                    if not in_string:
+                        # Starting a new string
+                        in_string = True
+                        string_start_char = char
+                        result.append(char)
+                    elif char == string_start_char:
+                        # Ending the current string
+                        in_string = False
+                        string_start_char = None
+                        result.append(char)
+                    else:
+                        # This is a different quote character inside a string, escape it
+                        result.append('\\')
+                        result.append(char)
+                else:
+                    result.append(char)
+
+                i += 1
+
+            return ''.join(result)
+
+        except Exception as e:
+            print(f"Error in quote fixing: {e}")
+            # Fallback: try to manually escape all quotes that aren't already escaped
+            try:
+                # Simple fallback: escape all unescaped quotes
+                result = []
+                i = 0
+                while i < len(json_str):
+                    if json_str[i] == '"' and (i == 0 or json_str[i-1] != '\\'):
+                        # This is an unescaped quote, escape it
+                        result.append('\\"')
+                    else:
+                        result.append(json_str[i])
+                    i += 1
+                return ''.join(result)
+            except:
+                return json_str
 
     def _extract_json_fallback(self, response_text):
         """Fallback method to extract JSON when parsing fails"""
@@ -433,6 +583,74 @@ class ResumeProcessor:
 
         print(f"Fallback extraction successful: {bool(cover_letter != 'Error: Could not parse AI response')}")
         return result
+
+    def _extract_interview_prep_fallback(self, response_text):
+        """Specialized fallback method for interview prep JSON parsing"""
+        print(f"Attempting specialized interview prep JSON extraction...")
+
+        # Try to extract general_questions array
+        general_questions = []
+        role_based_questions = []
+
+        # Look for general_questions array
+        general_match = re.search(r'"general_questions"\s*:\s*(\[[^\]]*\])', response_text, re.DOTALL)
+        if general_match:
+            try:
+                general_questions = json.loads(general_match.group(1))
+                print(f"Successfully extracted {len(general_questions)} general questions")
+            except json.JSONDecodeError as e:
+                print(f"Failed to parse general_questions array: {e}")
+
+        # Look for role_based_questions array
+        role_match = re.search(r'"role_based_questions"\s*:\s*(\[[^\]]*\])', response_text, re.DOTALL)
+        if role_match:
+            try:
+                role_based_questions = json.loads(role_match.group(1))
+                print(f"Successfully extracted {len(role_based_questions)} role-based questions")
+            except json.JSONDecodeError as e:
+                print(f"Failed to parse role_based_questions array: {e}")
+
+        # If we got at least one type of questions, return them
+        if general_questions or role_based_questions:
+            result = {
+                'general_questions': general_questions,
+                'role_based_questions': role_based_questions
+            }
+            print(f"Interview prep fallback extraction successful: {len(general_questions)} general, {len(role_based_questions)} role-based questions")
+            return result
+
+        # If that didn't work, try a more aggressive approach
+        print("Trying aggressive JSON extraction for interview prep...")
+
+        # Look for any arrays that might contain question objects
+        question_arrays = re.findall(r'\[\s*\{[^}]*"question"[^}]*\}[^\]]*\]', response_text, re.DOTALL)
+
+        for i, array_str in enumerate(question_arrays):
+            try:
+                questions = json.loads(array_str)
+                if isinstance(questions, list) and len(questions) > 0:
+                    if i == 0:
+                        general_questions = questions
+                        print(f"Extracted {len(general_questions)} general questions from array {i}")
+                    else:
+                        role_based_questions = questions
+                        print(f"Extracted {len(role_based_questions)} role-based questions from array {i}")
+            except json.JSONDecodeError as e:
+                print(f"Failed to parse question array {i}: {e}")
+
+        if general_questions or role_based_questions:
+            result = {
+                'general_questions': general_questions,
+                'role_based_questions': role_based_questions
+            }
+            print(f"Aggressive interview prep extraction successful: {len(general_questions)} general, {len(role_based_questions)} role-based questions")
+            return result
+
+        print("All interview prep extraction methods failed")
+        return {
+            'general_questions': [],
+            'role_based_questions': []
+        }
 
     # MODIFIED: Logic to handle custom prompts
     def _get_prompt(self, prompt_key, custom_prompts_dict, placeholders):
@@ -585,7 +803,7 @@ Score Justification: Conclude with a summary paragraph that synthesizes the stre
 
 PRIMARY OBJECTIVE:
 
-Analyze the provided {FULL_RESUME_TEXT} in the context of the {JOB_DESCRIPTION} for the {JOB_TITLE} role at {COMPANY}. Your goal is to produce a set of highly targeted interview questions and exemplary answers that will strategically position the candidate for success. The output must be a single, valid JSON object.
+Analyze the provided {FULL_RESUME_TEXT} in the context of the {JOB_DESCRIPTION} for the {JOB_TITLE} role at {COMPANY}. Your goal is to produce a set of highly targeted interview questions and exemplary answers that will strategically position the candidate for success. The output must be a single, valid JSON object with the exact structure specified below - no additional categories or fields are allowed.
 
 ANALYTICAL FRAMEWORK (Your Internal Process):
 
@@ -597,13 +815,13 @@ TASK: GENERATE INTERVIEW QUESTIONS & ANSWERS
 
 Based on your analysis, generate two distinct categories of questions. For each question, provide both 'talking_points' (the strategic pillars of the response) and a complete sample 'answer' (a polished, first-person narrative).
 
-Category 1: General & Career Narrative Questions (5 Questions)
+Category 1: General & Career Narrative Questions (2 Questions)
 
 Mandate: These questions must stem directly from your analysis of the candidate's career trajectory as presented in the resume. They should probe their motivations, rationale for key transitions, and self-awareness. Target the potential "red flags" you identified, framing them as opportunities for the candidate to demonstrate growth, resilience, or strategic thinking. Do not ask generic questions like "Tell me about yourself." Instead, ask pointed questions like, "I noticed you transitioned from [Industry/Role A] to [Industry/Role B]. What catalyzed that specific change, and how did it prepare you for the challenges outlined in our job description?"
 
 Answer Construction: The answers here should solidify the candidate's career narrative. They must explain the "why" behind their decisions, connecting past experiences to their future ambitions for this specific role.
 
-Category 2: Role-Based & Behavioral Questions (5 Questions)
+Category 2: Role-Based Questions (2 Questions)
 
 Mandate: These questions must be surgical strikes that connect a specific, critical requirement from the {JOB_DESCRIPTION} with a concrete project or achievement from the {FULL_RESUME_TEXT}. Frame the questions behaviorally to compel storytelling. For example, instead of "Do you have experience with X?", ask, "The job requires extensive experience with [Tool/Skill X from JD]. Describe your most challenging project from your time at [Company from Resume] where you leveraged this skill to overcome a significant obstacle."
 
@@ -616,6 +834,31 @@ Task: Describe the specific goal or objective you were responsible for.
 Action: Detail the specific, individual steps you took to address the task. This is the most important part.
 
 Result: Quantify the outcome. Use metrics, data, and tangible business impact (e.g., "reduced latency by 30%", "increased user engagement by 15%", "saved the project $50k in operational costs"). The result must tie back to the value sought in the job description.
+
+STRICT OUTPUT REQUIREMENTS:
+
+You must return ONLY a valid JSON object with the following EXACT structure. Do not include any text before or after the JSON object. Do not create additional categories beyond these two (no "behavioral_questions" or other categories).
+
+IMPORTANT: Ensure that ALL quotes within your JSON string values are properly escaped with backslashes (e.g., "He said \"Hello\" to me"). Also ensure that all special characters like newlines are properly escaped as \\n. This is CRITICAL for the JSON to be parseable.
+
+```json
+{
+  "general_questions": [
+    {
+      "question": "Specific question targeting career narrative...",
+      "talking_points": ["Key point 1", "Key point 2", "Key point 3"],
+      "answer": "Complete first-person answer using STAR method with properly escaped quotes like \\\"example\\\"..."
+    }
+  ],
+  "role_based_questions": [
+    {
+      "question": "Specific role-based question...",
+      "talking_points": ["Key point 1", "Key point 2", "Key point 3"],
+      "answer": "Complete first-person answer using STAR method with properly escaped quotes like \\\"example\\\"..."
+    }
+  ]
+}
+```
 
 QUALITY DIRECTIVES:
 
@@ -640,9 +883,9 @@ Authentic Voice: The sample answer should be written in a confident, professiona
         elif prompt_key == 'single_paragraph':
             json_requirement = "\n\nCRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:\n" + placeholders.get('JSON_STRUCTURE', '{ "enhanced_text": "The new, enhanced paragraph text here..." }')
         elif prompt_key == 'cover_letter':
-            json_requirement = "\n\nCRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:\n" + placeholders.get('JSON_STRUCTURE', '{\n  "cover_letter": "The full cover letter text here...",\n  "match_score": 85,\n  "match_score_analysis": {\n    "strengths": "Strengths of candidacy...",\n    "gaps": "Potential gaps and weaknesses...",\n    "justification": "Score justification..."\n  }\n}')
+            json_requirement = "\n\nCRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure:\n" + placeholders.get('JSON_STRUCTURE', '{\n "cover_letter": "The full cover letter text here...",\n  "match_score": 85,\n  "match_score_analysis": {\n    "strengths": "Strengths of candidacy...",\n    "gaps": "Potential gaps and weaknesses...",\n    "justification": "Score justification..."\n }\n}')
         elif prompt_key == 'interview_prep':
-            json_requirement = "\n\nCRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure. Do not add any text or markdown before or after the JSON object.\n" + placeholders.get('JSON_STRUCTURE', '{\n  "general_questions": [\n    { "question": "...", "talking_points": ["..."], "answer": "..." }\n  ],\n  "role_based_questions": [\n    { "question": "...", "talking_points": ["..."], "answer": "..." }\n  ]\n}')
+            json_requirement = "\n\nCRITICAL OUTPUT: Your entire response MUST be a single, valid JSON object with this exact structure. Do not add any text or markdown before or after the JSON object.\n" + placeholders.get('JSON_STRUCTURE', '{\n "general_questions": [\n    { "question": "...", "talking_points": ["..."], "answer": "..." }\n ],\n  "role_based_questions": [\n    { "question": "...", "talking_points": ["..."], "answer": "..." }\n  ]\n}')
 
         prompt_template += json_requirement
 
